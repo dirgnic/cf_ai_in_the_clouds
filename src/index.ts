@@ -1,12 +1,22 @@
+import { ClinicAgent } from "./lib/clinic-agent";
 import { ChatSessionDO } from "./lib/chat-session-do";
 import { getSessionStub } from "./lib/do-client";
 import { json, safeJson, toErrorMessage } from "./lib/http";
-import { handleChat, handleProfile, handleReset, handleTriage } from "./lib/handlers";
+import {
+  handleChat,
+  handleExport,
+  handleGlossary,
+  handleMode,
+  handleProfile,
+  handleReset,
+  handleTriage,
+} from "./lib/handlers";
+import { TriageWorkflow } from "./lib/triage-workflow";
 import { APP_HTML } from "./lib/ui";
 import { isValidSessionId } from "./lib/validation";
 import type { Env } from "./lib/types";
 
-export { ChatSessionDO };
+export { ChatSessionDO, ClinicAgent, TriageWorkflow };
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
@@ -22,14 +32,21 @@ export default {
 
     const body = await safeJson(request);
     if (!body) return json({ error: "Invalid JSON body" }, 400);
+
+    if (url.pathname === "/api/glossary") {
+      return handleGlossary(body);
+    }
+
     if (!isValidSessionId(body.sessionId)) return json({ error: "sessionId is required" }, 400);
 
     const stub = getSessionStub(env, body.sessionId);
 
     try {
       if (url.pathname === "/api/profile") return handleProfile(body, stub);
+      if (url.pathname === "/api/mode") return handleMode(body, stub);
       if (url.pathname === "/api/chat") return handleChat(body, env, stub);
       if (url.pathname === "/api/triage") return handleTriage(env, stub);
+      if (url.pathname === "/api/export") return handleExport(stub);
       if (url.pathname === "/api/reset") return handleReset(stub);
       return json({ error: "Not found" }, 404);
     } catch (error) {

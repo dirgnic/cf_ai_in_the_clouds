@@ -35,9 +35,8 @@ export async function buildSummary(env: Env, history: ChatMessage[]): Promise<st
 export async function extractCase(env: Env, state: SessionState): Promise<CaseData> {
   const context = state.history.slice(-20).map((m) => m.role + ": " + m.content).join("\\n");
 
-  const raw = await callModel(
-    env,
-    [
+  const raw = (await env.AI.run(MODEL, {
+    messages: [
       { role: "system", content: CASE_EXTRACT_PROMPT },
       {
         role: "user",
@@ -47,10 +46,13 @@ export async function extractCase(env: Env, state: SessionState): Promise<CaseDa
           "\\nChat:\\n" + context,
       },
     ],
-    { maxTokens: 380, temperature: 0 },
-  );
+    max_tokens: 380,
+    temperature: 0,
+    response_format: { type: "json_object" },
+  })) as { response?: string };
 
-  const jsonSlice = extractFirstJsonObject(raw);
+  const payload = raw.response || "";
+  const jsonSlice = extractFirstJsonObject(payload);
   if (!jsonSlice) return defaultCaseData();
 
   try {
@@ -66,13 +68,17 @@ export async function generateSoapNote(
   draftCase: CaseData,
   triage: Omit<TriageResult, "soapNote" | "generatedAt">,
 ): Promise<string> {
+  const style = state.clinicMode === "clinician"
+    ? "Use concise clinician tone."
+    : "Use patient-friendly plain language.";
+
   const note = await callModel(
     env,
     [
       {
         role: "system",
         content:
-          "Write a concise educational SOAP note with sections Subjective, Objective, Assessment, Plan, and one-line safety disclaimer.",
+          "Write a concise educational SOAP note with sections Subjective, Objective, Assessment, Plan, and one-line safety disclaimer. " + style,
       },
       {
         role: "user",

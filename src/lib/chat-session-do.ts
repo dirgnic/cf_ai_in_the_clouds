@@ -1,5 +1,13 @@
 import { json, safeJson } from "./http";
-import { defaultState, normalizeCaseData, normalizeMessage, normalizeProfile, normalizeState, normalizeTriageResult } from "./validation";
+import {
+  defaultState,
+  normalizeCaseData,
+  normalizeMessage,
+  normalizeMode,
+  normalizeProfile,
+  normalizeState,
+  normalizeTriageResult,
+} from "./validation";
 
 export class ChatSessionDO {
   constructor(private readonly state: DurableObjectState) {}
@@ -33,6 +41,14 @@ export class ChatSessionDO {
       };
       await this.state.storage.put("session", session);
       return json({ ok: true, profile: session.profile });
+    }
+
+    if (request.method === "POST" && url.pathname === "/set-mode") {
+      const body = await safeJson(request);
+      const session = normalizeState(await this.state.storage.get("session"));
+      session.clinicMode = normalizeMode(body?.mode);
+      await this.state.storage.put("session", session);
+      return json({ ok: true, mode: session.clinicMode });
     }
 
     if (request.method === "POST" && url.pathname === "/set-summary") {

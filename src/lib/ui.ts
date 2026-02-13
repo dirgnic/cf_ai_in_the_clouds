@@ -25,28 +25,13 @@ export const APP_HTML = `<!doctype html>
           var(--bg);
       }
       .container { max-width: 1080px; margin: 0 auto; padding: 16px; }
-      .hero {
-        border-radius: 16px;
-        color: white;
-        padding: 20px;
-        background: linear-gradient(120deg, #0f8b8d, #4f9d69);
-      }
+      .hero { border-radius: 16px; color: white; padding: 20px; background: linear-gradient(120deg, #0f8b8d, #4f9d69); }
       .grid { margin-top: 14px; display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
       .card { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 12px; }
       .fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
-      input, textarea { width: 100%; border: 1px solid var(--border); border-radius: 10px; padding: 9px; font: inherit; }
+      input, textarea, select { width: 100%; border: 1px solid var(--border); border-radius: 10px; padding: 9px; font: inherit; }
       .chat { display: flex; flex-direction: column; gap: 8px; }
-      .messages {
-        border: 1px solid var(--border);
-        border-radius: 12px;
-        background: #fbfdfd;
-        height: 46vh;
-        overflow-y: auto;
-        padding: 10px;
-        display: flex;
-        flex-direction: column;
-        gap: 8px;
-      }
+      .messages { border: 1px solid var(--border); border-radius: 12px; background: #fbfdfd; height: 46vh; overflow-y: auto; padding: 10px; display: flex; flex-direction: column; gap: 8px; }
       .bubble { max-width: 86%; padding: 9px 11px; border-radius: 11px; white-space: pre-wrap; line-height: 1.4; }
       .user { align-self: flex-end; background: #e2f5f6; border: 1px solid #bde4e4; }
       .assistant { align-self: flex-start; background: #f4f9f6; border: 1px solid #d8ebe0; }
@@ -57,6 +42,7 @@ export const APP_HTML = `<!doctype html>
       .triage { background: #e9f3ea; color: #184f2d; }
       .danger { background: #f7e6e6; color: var(--warning); }
       .status { color: var(--muted); min-height: 20px; }
+      .row { display: flex; gap: 8px; align-items: center; }
       pre { background: #f7fbfb; border: 1px solid var(--border); border-radius: 10px; padding: 10px; max-height: 30vh; overflow: auto; margin: 8px 0 0; }
       @media (max-width: 900px) {
         .grid { grid-template-columns: 1fr; }
@@ -81,8 +67,15 @@ export const APP_HTML = `<!doctype html>
             <input id="conditions" placeholder="Conditions" />
             <input id="allergies" placeholder="Allergies" />
             <input id="medications" placeholder="Medications" />
+            <select id="clinicMode">
+              <option value="patient_friendly">Patient-friendly mode</option>
+              <option value="clinician">Clinician mode</option>
+            </select>
           </div>
-          <div class="actions" style="margin-top:8px;"><button id="saveProfile" class="secondary">Save Profile</button></div>
+          <div class="actions" style="margin-top:8px;">
+            <button id="saveProfile" class="secondary">Save Profile</button>
+            <button id="saveMode" class="secondary">Save Mode</button>
+          </div>
         </article>
 
         <article class="card chat">
@@ -93,6 +86,7 @@ export const APP_HTML = `<!doctype html>
             <button id="sendBtn" class="primary">Send</button>
             <button id="voiceBtn" class="secondary">Voice Input</button>
             <button id="triageBtn" class="triage">Run Triage</button>
+            <button id="downloadBtn" class="secondary">Download SOAP .md</button>
             <button id="resetBtn" class="danger">Reset</button>
           </div>
           <p id="status" class="status"></p>
@@ -103,6 +97,15 @@ export const APP_HTML = `<!doctype html>
         <article class="card"><h3>Workflow Progress</h3><pre id="progressPanel">No triage yet.</pre></article>
         <article class="card"><h3>Draft Case + SOAP Output</h3><pre id="resultPanel">Run triage to generate output.</pre></article>
       </section>
+
+      <section class="card" style="margin-top:14px;">
+        <h3>Medical Glossary</h3>
+        <div class="row">
+          <input id="glossaryInput" placeholder="Try: triage, soap, dyspnea" />
+          <button id="glossaryBtn" class="secondary">Lookup</button>
+        </div>
+        <pre id="glossaryPanel">No lookup yet.</pre>
+      </section>
     </main>
 
     <script>
@@ -111,8 +114,14 @@ export const APP_HTML = `<!doctype html>
       var sendBtn = document.getElementById('sendBtn');
       var voiceBtn = document.getElementById('voiceBtn');
       var triageBtn = document.getElementById('triageBtn');
+      var downloadBtn = document.getElementById('downloadBtn');
       var resetBtn = document.getElementById('resetBtn');
       var saveProfileBtn = document.getElementById('saveProfile');
+      var saveModeBtn = document.getElementById('saveMode');
+      var clinicMode = document.getElementById('clinicMode');
+      var glossaryBtn = document.getElementById('glossaryBtn');
+      var glossaryInput = document.getElementById('glossaryInput');
+      var glossaryPanel = document.getElementById('glossaryPanel');
       var statusEl = document.getElementById('status');
       var progressPanel = document.getElementById('progressPanel');
       var resultPanel = document.getElementById('resultPanel');
@@ -128,9 +137,12 @@ export const APP_HTML = `<!doctype html>
 
       sendBtn.addEventListener('click', sendMessage);
       triageBtn.addEventListener('click', runTriage);
+      downloadBtn.addEventListener('click', downloadMarkdown);
       resetBtn.addEventListener('click', resetAll);
       saveProfileBtn.addEventListener('click', saveProfile);
+      saveModeBtn.addEventListener('click', saveMode);
       voiceBtn.addEventListener('click', startVoice);
+      glossaryBtn.addEventListener('click', lookupGlossary);
 
       prompt.addEventListener('keydown', function(event) {
         if (event.key === 'Enter' && !event.shiftKey) {
@@ -164,6 +176,15 @@ export const APP_HTML = `<!doctype html>
             }
           });
           setStatus('Profile saved');
+        } catch (error) {
+          setStatus(error.message || String(error), true);
+        }
+      }
+
+      async function saveMode() {
+        try {
+          await api('/api/mode', { sessionId: sessionId, mode: clinicMode.value });
+          setStatus('Mode saved: ' + clinicMode.value);
         } catch (error) {
           setStatus(error.message || String(error), true);
         }
@@ -212,6 +233,33 @@ export const APP_HTML = `<!doctype html>
           setStatus(error.message || String(error), true);
         } finally {
           triageBtn.disabled = false;
+        }
+      }
+
+      async function downloadMarkdown() {
+        try {
+          var body = await api('/api/export', { sessionId: sessionId });
+          var blob = new Blob([body.markdown], { type: 'text/markdown;charset=utf-8' });
+          var link = document.createElement('a');
+          link.href = URL.createObjectURL(blob);
+          link.download = 'clinic-companion-soap.md';
+          link.click();
+          URL.revokeObjectURL(link.href);
+          setStatus('Downloaded markdown');
+        } catch (error) {
+          setStatus(error.message || String(error), true);
+        }
+      }
+
+      async function lookupGlossary() {
+        try {
+          var term = glossaryInput.value.trim();
+          var body = await api('/api/glossary', { term: term });
+          glossaryPanel.textContent = body.definition
+            ? (body.term + ': ' + body.definition)
+            : ('Terms: ' + body.terms.join(', '));
+        } catch (error) {
+          setStatus(error.message || String(error), true);
         }
       }
 

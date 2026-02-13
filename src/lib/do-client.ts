@@ -1,7 +1,7 @@
 import { MAX_SUMMARY_CHARS } from "./constants";
 import { buildSummary } from "./ai";
 import { asString, isRecord, normalizeState } from "./validation";
-import type { ChatMessage, Env, Profile, SessionState } from "./types";
+import type { ChatMessage, ClinicMode, Env, Profile, SessionState } from "./types";
 
 export async function callDo<T>(stub: DurableObjectStub, path: string, init?: RequestInit): Promise<T> {
   const response = await stub.fetch("https://do" + path, init);
@@ -45,6 +45,14 @@ export async function setProfile(stub: DurableObjectStub, profile: Profile): Pro
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ profile }),
+  });
+}
+
+export async function setMode(stub: DurableObjectStub, mode: ClinicMode): Promise<void> {
+  await callDo(stub, "/set-mode", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ mode }),
   });
 }
 

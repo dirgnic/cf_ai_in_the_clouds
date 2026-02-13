@@ -1,45 +1,46 @@
 # Clinic Companion (Cloudflare AI Assignment)
 
-Clinic Companion is an original, medicine-themed AI app for educational intake + triage + SOAP note drafting.
+Clinic Companion is an original medicine-themed AI app for intake + triage + SOAP drafting.
 
-## Compliance Checklist
+## Requirements Coverage
 
-- Repository name prefix requirement: **`cf_ai_`**
-- Project documentation and run instructions: **this `README.md`**
-- AI prompts used: **`PROMPTS.md`**
-- Original work statement: implemented specifically for this submission
+- LLM: Workers AI Llama 3.3 (`env.AI.run`) with JSON-mode extraction
+- Workflow / coordination: Cloudflare Workflows (`TriageWorkflow`) + fallback worker pipeline
+- User input: chat + browser voice input
+- Memory/state: Durable Objects (`ChatSessionDO`) and Agents SDK class (`ClinicAgent`)
 
-## Assignment Requirements Coverage
+## Included Architecture Pieces
 
-- LLM: Workers AI (`@cf/meta/llama-3.3-70b-instruct-fp8-fast`)
-- Workflow / coordination: multi-step triage pipeline coordinated in the Worker
-- User input: browser chat + optional voice input via Web Speech API
-- Memory/state: per-session Durable Object state (profile, summary, last triage)
+- `src/lib/clinic-agent.ts`: Agents SDK `ClinicAgent extends Agent`
+- `src/lib/triage-workflow.ts`: Workflow class using `step.do(...)`
+- `src/lib/chat-session-do.ts`: session state storage and APIs
+- `src/lib/handlers.ts`: API orchestration
+- `src/lib/ai.ts`: LLM calls, JSON extraction, SOAP generation
+- `src/lib/ui.ts`: frontend chat/voice/progress UI
+
+## Endpoints
+
+- `POST /api/profile`
+- `POST /api/mode` (`patient_friendly` or `clinician`)
+- `POST /api/chat`
+- `POST /api/triage`
+- `POST /api/export` (downloadable Markdown content)
+- `POST /api/glossary` (term lookup)
+- `POST /api/reset`
+
+## Optional Extras Implemented
+
+- Reset session button
+- Download SOAP note as Markdown
+- Medical glossary lookup tool
+- Clinic mode toggle (patient-friendly vs clinician)
 
 ## Safety Notice
 
-This app is educational only and not medical advice.
+Educational only, not medical advice.
 Do not enter real personal health data.
 
-## What It Does
-
-1. User chats symptoms (or uses voice input).
-2. Assistant asks follow-up questions.
-3. User clicks **Run Triage**.
-4. App runs a 3-step pipeline:
-   - extract structured case JSON,
-   - apply deterministic red-flag rules,
-   - generate a SOAP note draft.
-5. Profile + summaries + triage results persist in Durable Objects.
-
-## Architecture
-
-- Backend: Cloudflare Worker (`src/index.ts`)
-- Model: Workers AI via `env.AI.run(...)`
-- State: Durable Object `ChatSessionDO`
-- Frontend: inlined HTML/CSS/JS chat UI in `src/index.ts`
-
-## Run Locally
+## Local Run
 
 1. Install dependencies:
 
@@ -47,25 +48,19 @@ Do not enter real personal health data.
 npm install
 ```
 
-2. Authenticate Wrangler (if needed):
+2. Authenticate Wrangler:
 
 ```bash
 npx wrangler login
 ```
 
-3. Start local dev server:
+3. Start locally:
 
 ```bash
 npm run dev
 ```
 
-4. Open the local URL printed by Wrangler (usually `http://127.0.0.1:8787`).
-
-5. Try the components:
-- Save an optional profile.
-- Send intake messages in chat.
-- Click **Run Triage** and review progress + SOAP output.
-- Use **Voice Input** (browser support required).
+4. Open the local URL from Wrangler.
 
 ## Deploy
 
@@ -73,20 +68,17 @@ npm run dev
 npm run deploy
 ```
 
-After deploy, place your production URL here:
+## Demo Script (30 sec)
 
-- Live URL: `<your deployed worker url>`
-
-## Demo Script (30 seconds)
-
-1. Save profile (optional).
-2. Enter: `Sore throat 3 days, fever 38.7C, fatigue`.
-3. Answer follow-ups.
-4. Click **Run Triage**.
-5. Show workflow progress + recommendation + SOAP note.
+1. Enter symptom details in chat.
+2. Optionally save profile and clinic mode.
+3. Click **Run Triage**.
+4. Show workflow progress and SOAP output.
+5. Click **Download SOAP .md**.
+6. Show glossary lookup.
 
 ## Submission
 
 - GitHub repo URL: `https://github.com/dirgnic/cf_ai_in_the_clouds`
 - Live URL: `<your deployed worker url>`
-- AI prompts used: `PROMPTS.md`
+- AI prompts: `PROMPTS.md`

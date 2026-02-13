@@ -1,6 +1,7 @@
-name = "in-the-clouds-med-agent"
+name = "cf-ai-clinic-companion"
 main = "src/index.ts"
 compatibility_date = "2025-02-01"
+compatibility_flags = ["nodejs_compat"]
 
 [ai]
 binding = "AI"
@@ -9,6 +10,19 @@ binding = "AI"
 name = "CHAT_SESSIONS"
 class_name = "ChatSessionDO"
 
+[[durable_objects.bindings]]
+name = "CLINIC_AGENT"
+class_name = "ClinicAgent"
+
+[[workflows]]
+name = "clinic-triage-workflow"
+binding = "TRIAGE_WORKFLOW"
+class_name = "TriageWorkflow"
+
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["ChatSessionDO"]
+
+[[migrations]]
+tag = "v2"
+new_sqlite_classes = ["ClinicAgent"]

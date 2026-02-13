@@ -1,5 +1,5 @@
 import { MAX_HISTORY_MESSAGES, MAX_MESSAGE_CHARS, MAX_SUMMARY_CHARS } from "./constants";
-import type { CaseData, ChatMessage, JsonObject, Profile, SessionState, TriageRecommendation, TriageResult } from "./types";
+import type { CaseData, ChatMessage, ClinicMode, JsonObject, Profile, SessionState, TriageRecommendation, TriageResult } from "./types";
 
 export function defaultProfile(): Profile {
   return { ageRange: "", sex: "", conditions: "", allergies: "", medications: "" };
@@ -18,6 +18,10 @@ export function defaultCaseData(): CaseData {
   };
 }
 
+export function defaultMode(): ClinicMode {
+  return "patient_friendly";
+}
+
 export function defaultState(): SessionState {
   return {
     profile: defaultProfile(),
@@ -25,6 +29,7 @@ export function defaultState(): SessionState {
     conversationSummary: "",
     draftCase: null,
     lastTriage: null,
+    clinicMode: defaultMode(),
   };
 }
 
@@ -52,6 +57,10 @@ export function asNullableNumber(value: unknown): number | null {
 
 export function isValidSessionId(value: unknown): value is string {
   return typeof value === "string" && value.length >= 8 && value.length <= 128;
+}
+
+export function normalizeMode(value: unknown): ClinicMode {
+  return value === "clinician" ? "clinician" : "patient_friendly";
 }
 
 export function normalizeProfile(value: unknown): Profile {
@@ -117,6 +126,7 @@ export function normalizeState(value: unknown): SessionState {
     conversationSummary: asString(value.conversationSummary, MAX_SUMMARY_CHARS),
     draftCase: value.draftCase ? normalizeCaseData(value.draftCase) : null,
     lastTriage: normalizeTriageResult(value.lastTriage),
+    clinicMode: normalizeMode(value.clinicMode),
   };
 }
 

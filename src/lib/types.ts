@@ -1,6 +1,12 @@
+export type WorkflowBinding = {
+  create: (input: { params: unknown }) => Promise<{ id: string; result: () => Promise<unknown> }>;
+};
+
 export interface Env {
   AI: Ai;
   CHAT_SESSIONS: DurableObjectNamespace;
+  CLINIC_AGENT?: DurableObjectNamespace;
+  TRIAGE_WORKFLOW?: WorkflowBinding;
 }
 
 export type ChatRole = "user" | "assistant";
@@ -18,6 +24,8 @@ export type Profile = {
   allergies: string;
   medications: string;
 };
+
+export type ClinicMode = "patient_friendly" | "clinician";
 
 export type CaseData = {
   symptoms: string[];
@@ -46,6 +54,7 @@ export type SessionState = {
   conversationSummary: string;
   draftCase: CaseData | null;
   lastTriage: TriageResult | null;
+  clinicMode: ClinicMode;
 };
 
 export type JsonObject = Record<string, unknown>;
