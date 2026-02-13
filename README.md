@@ -1,30 +1,51 @@
-# MedCloud Guide (Cloudflare AI Assignment)
+# Clinic Companion (Cloudflare AI Assignment)
 
-A medicine-focused AI app built on Cloudflare with:
+Clinic Companion is an original, medicine-themed AI app for educational intake + triage + SOAP note drafting.
+
+It satisfies the assignment requirements:
 
 - LLM: Workers AI (`@cf/meta/llama-3.3-70b-instruct-fp8-fast`)
-- Workflow/coordination: Worker orchestrates request flow
-- User input: browser chat UI
-- Memory/state: Durable Object keeps chat history per session
+- Workflow / coordination: multi-step triage pipeline coordinated in the Worker
+- User input: browser chat + optional voice input via Web Speech API
+- Memory/state: per-session Durable Object state (profile, summary, last triage)
 
-## Why this is original
+## Safety notice
 
-Instead of a generic chatbot, this app is a **medical education guide** that:
+This app is educational only and not medical advice.
+Do not enter real personal health data.
 
-- asks follow-up questions when context is missing,
-- gives practical next steps,
-- includes safety disclaimers,
-- preserves conversation memory for continuity.
+## What it does
+
+1. User chats symptoms (or uses voice input).
+2. Assistant asks follow-up questions.
+3. User clicks **Run Triage**.
+4. App runs a 3-step pipeline:
+   - extract structured case JSON,
+   - apply deterministic red-flag rules,
+   - generate a SOAP note draft.
+5. Profile + summaries + triage results persist in Durable Objects.
 
 ## Architecture
 
-1. User sends a message from the chat UI.
-2. Worker fetches session history from `ChatSessionDO`.
-3. Worker calls Workers AI with system prompt + history + new user message.
-4. Worker stores both user and assistant messages back in `ChatSessionDO`.
-5. Worker returns the assistant response to the UI.
+- `src/index.ts`
+  - Worker routes:
+    - `POST /api/profile`
+    - `POST /api/chat`
+    - `POST /api/triage`
+    - `POST /api/reset`
+  - Durable Object `ChatSessionDO` stores:
+    - `profile`
+    - `history`
+    - `conversationSummary`
+    - `draftCase`
+    - `lastTriage`
+  - Inlined frontend UI:
+    - chat,
+    - voice capture,
+    - triage progress,
+    - SOAP output panel.
 
-## Step-by-step (easy)
+## Local setup
 
 1. Install dependencies:
 
@@ -32,7 +53,7 @@ Instead of a generic chatbot, this app is a **medical education guide** that:
 npm install
 ```
 
-2. Login to Cloudflare (if needed):
+2. Authenticate Wrangler (if needed):
 
 ```bash
 npx wrangler login
@@ -44,26 +65,27 @@ npx wrangler login
 npm run dev
 ```
 
-4. Open the local URL shown by Wrangler and chat with MedCloud Guide.
+4. Open the URL printed by Wrangler and test chat + triage.
 
-5. Deploy:
+## Deploy
 
 ```bash
 npm run deploy
 ```
 
-6. Copy your deployed URL and submit your GitHub repo URL for the assignment.
+## Assignment demo script (30 seconds)
 
-## Suggested submission format
+1. Save profile (optional).
+2. Enter: `Sore throat 3 days, fever 38.7C, fatigue`.
+3. Answer follow-ups.
+4. Click **Run Triage**.
+5. Show workflow progress + recommendation + SOAP note.
 
-- **GitHub repo URL**: `https://github.com/<your-user>/in_the_clouds`
-- **Live URL**: `<your-worker-url>`
-- **Notes**:
-  - Uses Workers AI + Durable Objects
-  - Includes chat UI + per-session memory
-  - Medical guidance only (non-diagnostic)
+## Submission
 
-## Files
+- GitHub repo URL: `https://github.com/dirgnic/in_the_clouds`
+- Live worker URL: `<your deployed URL>`
 
-- `src/index.ts`: Worker, API routes, Durable Object, and UI
-- `wrangler.toml`: Cloudflare bindings + Durable Object migration
+## Notes on the Cloudflare docs references you shared
+
+Your referenced architecture (Agents starter + Workflows + callable methods + JSON-mode extraction) is compatible with this project direction. This MVP keeps implementation compact while still covering the assignment criteria with Workers AI + Durable Objects + coordinated triage steps.
