@@ -2,19 +2,26 @@
 
 Clinic Companion is an original, medicine-themed AI app for educational intake + triage + SOAP note drafting.
 
-It satisfies the assignment requirements:
+## Compliance Checklist
+
+- Repository name prefix requirement: **`cf_ai_`**
+- Project documentation and run instructions: **this `README.md`**
+- AI prompts used: **`PROMPTS.md`**
+- Original work statement: implemented specifically for this submission
+
+## Assignment Requirements Coverage
 
 - LLM: Workers AI (`@cf/meta/llama-3.3-70b-instruct-fp8-fast`)
 - Workflow / coordination: multi-step triage pipeline coordinated in the Worker
 - User input: browser chat + optional voice input via Web Speech API
 - Memory/state: per-session Durable Object state (profile, summary, last triage)
 
-## Safety notice
+## Safety Notice
 
 This app is educational only and not medical advice.
 Do not enter real personal health data.
 
-## What it does
+## What It Does
 
 1. User chats symptoms (or uses voice input).
 2. Assistant asks follow-up questions.
@@ -27,25 +34,12 @@ Do not enter real personal health data.
 
 ## Architecture
 
-- `src/index.ts`
-  - Worker routes:
-    - `POST /api/profile`
-    - `POST /api/chat`
-    - `POST /api/triage`
-    - `POST /api/reset`
-  - Durable Object `ChatSessionDO` stores:
-    - `profile`
-    - `history`
-    - `conversationSummary`
-    - `draftCase`
-    - `lastTriage`
-  - Inlined frontend UI:
-    - chat,
-    - voice capture,
-    - triage progress,
-    - SOAP output panel.
+- Backend: Cloudflare Worker (`src/index.ts`)
+- Model: Workers AI via `env.AI.run(...)`
+- State: Durable Object `ChatSessionDO`
+- Frontend: inlined HTML/CSS/JS chat UI in `src/index.ts`
 
-## Local setup
+## Run Locally
 
 1. Install dependencies:
 
@@ -59,13 +53,19 @@ npm install
 npx wrangler login
 ```
 
-3. Run locally:
+3. Start local dev server:
 
 ```bash
 npm run dev
 ```
 
-4. Open the URL printed by Wrangler and test chat + triage.
+4. Open the local URL printed by Wrangler (usually `http://127.0.0.1:8787`).
+
+5. Try the components:
+- Save an optional profile.
+- Send intake messages in chat.
+- Click **Run Triage** and review progress + SOAP output.
+- Use **Voice Input** (browser support required).
 
 ## Deploy
 
@@ -73,7 +73,11 @@ npm run dev
 npm run deploy
 ```
 
-## Assignment demo script (30 seconds)
+After deploy, place your production URL here:
+
+- Live URL: `<your deployed worker url>`
+
+## Demo Script (30 seconds)
 
 1. Save profile (optional).
 2. Enter: `Sore throat 3 days, fever 38.7C, fatigue`.
@@ -83,9 +87,6 @@ npm run deploy
 
 ## Submission
 
-- GitHub repo URL: `https://github.com/dirgnic/in_the_clouds`
-- Live worker URL: `<your deployed URL>`
-
-## Notes on the Cloudflare docs references you shared
-
-Your referenced architecture (Agents starter + Workflows + callable methods + JSON-mode extraction) is compatible with this project direction. This MVP keeps implementation compact while still covering the assignment criteria with Workers AI + Durable Objects + coordinated triage steps.
+- GitHub repo URL: `https://github.com/dirgnic/cf_ai_in_the_clouds`
+- Live URL: `<your deployed worker url>`
+- AI prompts used: `PROMPTS.md`
