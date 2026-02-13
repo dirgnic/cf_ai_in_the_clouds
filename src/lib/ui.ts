@@ -151,15 +151,30 @@ export const APP_HTML = `<!doctype html>
         }
       });
 
-      async function api(path, payload) {
-        var res = await fetch(path, {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify(payload)
-        });
-        var body = await res.json();
-        if (!res.ok) throw new Error(body.error || 'Request failed');
-        return body;
+      async function api(path, payload, timeoutMs) {
+        var controller = new AbortController();
+        var timeout = setTimeout(function() {
+          controller.abort();
+        }, timeoutMs || 45000);
+
+        try {
+          var res = await fetch(path, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify(payload),
+            signal: controller.signal
+          });
+          var body = await res.json();
+          if (!res.ok) throw new Error(body.error || 'Request failed');
+          return body;
+        } catch (error) {
+          if (error && error.name === 'AbortError') {
+            throw new Error('Request timed out. Check Cloudflare auth/bindings and try again.');
+          }
+          throw error;
+        } finally {
+          clearTimeout(timeout);
+        }
       }
 
       async function saveProfile() {
@@ -196,26 +211,34 @@ export const APP_HTML = `<!doctype html>
         addBubble('user', text);
         prompt.value = '';
         sendBtn.disabled = true;
+        prompt.disabled = true;
         setStatus('Thinking...');
 
         try {
-          var body = await api('/api/chat', { sessionId: sessionId, message: text });
+          var body = await api('/api/chat', { sessionId: sessionId, message: text }, 60000);
           addBubble('assistant', body.reply);
           setStatus('Done');
         } catch (error) {
           setStatus(error.message || String(error), true);
         } finally {
           sendBtn.disabled = false;
+          prompt.disabled = false;
         }
       }
 
       async function runTriage() {
         triageBtn.disabled = true;
+        var ticks = 0;
+        var interval = setInterval(function() {
+          ticks += 1;
+          setStatus('Running triage workflow' + '.'.repeat((ticks % 3) + 1));
+        }, 700);
+
         setStatus('Running triage workflow...');
         progressPanel.textContent = 'Starting...';
 
         try {
-          var body = await api('/api/triage', { sessionId: sessionId });
+          var body = await api('/api/triage', { sessionId: sessionId }, 90000);
           progressPanel.textContent = body.progress.join('\n');
           resultPanel.textContent = JSON.stringify({
             draftCase: body.draftCase,
@@ -232,6 +255,7 @@ export const APP_HTML = `<!doctype html>
         } catch (error) {
           setStatus(error.message || String(error), true);
         } finally {
+          clearInterval(interval);
           triageBtn.disabled = false;
         }
       }
@@ -310,6 +334,10 @@ export const APP_HTML = `<!doctype html>
         statusEl.textContent = text;
         statusEl.style.color = warn ? '#8b2f2f' : '#4f6f6f';
       }
+
+      window.addEventListener('error', function(event) {
+        setStatus('UI error: ' + event.message, true);
+      });
     </script>
   </body>
 </html>`;
