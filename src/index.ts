@@ -46,14 +46,6 @@ type SessionState = {
   lastTriage: TriageResult | null;
 };
 
-const DEFAULT_STATE: SessionState = {
-  profile: {},
-  history: [],
-  conversationSummary: "",
-  draftCase: null,
-  lastTriage: null,
-};
-
 const CHAT_SYSTEM_PROMPT = `You are Clinic Companion, a medical education assistant.
 Rules:
 - You are not a doctor and cannot diagnose.
@@ -92,7 +84,10 @@ export class ChatSessionDO {
     if (request.method === "POST" && url.pathname === "/set-profile") {
       const body = (await request.json()) as { profile?: Profile };
       const session = await this.getState();
-      session.profile = { ...session.profile, ...(body.profile || {}) };
+      session.profile = {
+        ...session.profile,
+        ...sanitizeProfile(body.profile || {}),
+      };
       await this.saveState(session);
       return json({ ok: true, profile: session.profile });
     }
@@ -108,14 +103,14 @@ export class ChatSessionDO {
     if (request.method === "POST" && url.pathname === "/set-triage") {
       const body = (await request.json()) as { draftCase?: CaseData; lastTriage?: TriageResult };
       const session = await this.getState();
-      session.draftCase = body.draftCase || null;
-      session.lastTriage = body.lastTriage || null;
+      session.draftCase = body.draftCase ? normalizeCaseData(body.draftCase) : null;
+      session.lastTriage = body.lastTriage ? normalizeTriageResult(body.lastTriage) : null;
       await this.saveState(session);
       return json({ ok: true });
     }
 
     if (request.method === "POST" && url.pathname === "/reset") {
-      await this.saveState({ ...DEFAULT_STATE });
+      await this.saveState(createDefaultState());
       return json({ ok: true });
     }
 
@@ -124,7 +119,7 @@ export class ChatSessionDO {
 
   private async getState(): Promise<SessionState> {
     const state = await this.state.storage.get<SessionState>("session");
-    return state || { ...DEFAULT_STATE };
+    return normalizeSessionState(state);
   }
 
   private async saveState(session: SessionState): Promise<void> {
@@ -167,7 +162,7 @@ async function handleProfile(request: Request, env: Env): Promise<Response> {
     sessionId?: string;
     profile?: Profile;
   };
-  if (!sessionId || !profile) {
+  if (!isValidSessionId(sessionId) || !profile) {
     return json({ error: "sessionId and profile are required" }, 400);
   }
   const stub = getSessionStub(env, sessionId);
@@ -186,7 +181,7 @@ async function handleChat(request: Request, env: Env): Promise<Response> {
       message?: string;
     };
 
-    if (!sessionId || !message?.trim()) {
+    if (!isValidSessionId(sessionId) || !message?.trim()) {
       return json({ error: "sessionId and message are required" }, 400);
     }
 
@@ -232,12 +227,16 @@ async function handleChat(request: Request, env: Env): Promise<Response> {
 
     const latestState = await getSessionState(stub);
     if (latestState.history.length % 6 === 0) {
-      const summary = await buildConversationSummary(env, latestState.history);
-      await stub.fetch("https://do/set-summary", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ conversationSummary: summary }),
-      });
+      try {
+        const summary = await buildConversationSummary(env, latestState.history);
+        await stub.fetch("https://do/set-summary", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ conversationSummary: summary }),
+        });
+      } catch {
+        // Summary refresh is non-critical. Keep chat response successful.
+      }
     }
 
     return json({ reply: assistant });
@@ -249,12 +248,15 @@ async function handleChat(request: Request, env: Env): Promise<Response> {
 async function handleTriage(request: Request, env: Env): Promise<Response> {
   try {
     const { sessionId } = (await request.json()) as { sessionId?: string };
-    if (!sessionId) {
+    if (!isValidSessionId(sessionId)) {
       return json({ error: "sessionId is required" }, 400);
     }
 
     const stub = getSessionStub(env, sessionId);
     const state = await getSessionState(stub);
+    if (state.history.length === 0) {
+      return json({ error: "No intake history found. Chat first, then run triage." }, 400);
+    }
 
     const progress: string[] = [];
     progress.push("1/3 Extracting structured case...");
@@ -287,7 +289,7 @@ async function handleTriage(request: Request, env: Env): Promise<Response> {
 
 async function handleReset(request: Request, env: Env): Promise<Response> {
   const { sessionId } = (await request.json()) as { sessionId?: string };
-  if (!sessionId) {
+  if (!isValidSessionId(sessionId)) {
     return json({ error: "sessionId is required" }, 400);
   }
   const stub = getSessionStub(env, sessionId);
@@ -303,7 +305,7 @@ function getSessionStub(env: Env, sessionId: string): DurableObjectStub {
 async function getSessionState(stub: DurableObjectStub): Promise<SessionState> {
   const res = await stub.fetch("https://do/state");
   const payload = (await res.json()) as { session: SessionState };
-  return payload.session || { ...DEFAULT_STATE };
+  return normalizeSessionState(payload.session);
 }
 
 async function buildConversationSummary(env: Env, history: ChatMessage[]): Promise<string> {
@@ -347,35 +349,14 @@ async function extractStructuredCase(env: Env, state: SessionState): Promise<Cas
 }
 
 function parseCaseData(raw: string): CaseData {
-  const fallback: CaseData = {
-    symptoms: [],
-    duration: "",
-    severity: "",
-    feverC: null,
-    redFlags: [],
-    meds: [],
-    allergies: [],
-    notes: "",
-  };
-
   try {
     const maybeJson = extractFirstJsonObject(raw);
-    if (!maybeJson) return fallback;
+    if (!maybeJson) return normalizeCaseData({});
 
     const obj = JSON.parse(maybeJson) as Partial<CaseData>;
-
-    return {
-      symptoms: asStringArray(obj.symptoms),
-      duration: asString(obj.duration),
-      severity: asString(obj.severity),
-      feverC: asNullableNumber(obj.feverC),
-      redFlags: asStringArray(obj.redFlags),
-      meds: asStringArray(obj.meds),
-      allergies: asStringArray(obj.allergies),
-      notes: asString(obj.notes),
-    };
+    return normalizeCaseData(obj);
   } catch {
-    return fallback;
+    return normalizeCaseData({});
   }
 }
 
@@ -398,6 +379,80 @@ function asStringArray(value: unknown): string[] {
 function asNullableNumber(value: unknown): number | null {
   if (typeof value !== "number" || Number.isNaN(value)) return null;
   return value;
+}
+
+function normalizeCaseData(input: Partial<CaseData>): CaseData {
+  return {
+    symptoms: asStringArray(input.symptoms),
+    duration: asString(input.duration),
+    severity: asString(input.severity),
+    feverC: asNullableNumber(input.feverC),
+    redFlags: asStringArray(input.redFlags),
+    meds: asStringArray(input.meds),
+    allergies: asStringArray(input.allergies),
+    notes: asString(input.notes),
+  };
+}
+
+function normalizeTriageResult(input: Partial<TriageResult>): TriageResult {
+  const recommendation = input.recommendation;
+  const safeRecommendation =
+    recommendation === "self_care" || recommendation === "schedule_gp" || recommendation === "urgent"
+      ? recommendation
+      : "schedule_gp";
+
+  return {
+    recommendation: safeRecommendation,
+    reason: asString(input.reason),
+    redFlags: asStringArray(input.redFlags),
+    soapNote: asString(input.soapNote),
+    generatedAt: asString(input.generatedAt) || new Date().toISOString(),
+  };
+}
+
+function sanitizeProfile(profile: Profile): Profile {
+  return {
+    ageRange: asString(profile.ageRange).slice(0, 80),
+    sex: asString(profile.sex).slice(0, 40),
+    conditions: asString(profile.conditions).slice(0, 300),
+    allergies: asString(profile.allergies).slice(0, 300),
+    medications: asString(profile.medications).slice(0, 300),
+  };
+}
+
+function normalizeSessionState(state: SessionState | undefined): SessionState {
+  if (!state) return createDefaultState();
+  return {
+    profile: sanitizeProfile(state.profile || {}),
+    history: Array.isArray(state.history)
+      ? state.history
+          .filter((m) => m && (m.role === "user" || m.role === "assistant"))
+          .map((m) => ({
+            role: m.role,
+            content: asString(m.content).slice(0, 2000),
+            timestamp: asString(m.timestamp),
+          }))
+          .slice(-40)
+      : [],
+    conversationSummary: asString(state.conversationSummary).slice(0, 1200),
+    draftCase: state.draftCase ? normalizeCaseData(state.draftCase) : null,
+    lastTriage: state.lastTriage ? normalizeTriageResult(state.lastTriage) : null,
+  };
+}
+
+function createDefaultState(): SessionState {
+  return {
+    profile: {},
+    history: [],
+    conversationSummary: "",
+    draftCase: null,
+    lastTriage: null,
+  };
+}
+
+function isValidSessionId(sessionId?: string): sessionId is string {
+  if (!sessionId) return false;
+  return sessionId.length >= 8 && sessionId.length <= 128;
 }
 
 function applyTriageRules(data: CaseData): Omit<TriageResult, "soapNote" | "generatedAt"> {
