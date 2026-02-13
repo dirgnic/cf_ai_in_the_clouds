@@ -12,11 +12,11 @@ type ChatMessage = {
 };
 
 type Profile = {
-  ageRange?: string;
-  sex?: string;
-  conditions?: string;
-  allergies?: string;
-  medications?: string;
+  ageRange: string;
+  sex: string;
+  conditions: string;
+  allergies: string;
+  medications: string;
 };
 
 type CaseData = {
@@ -30,8 +30,10 @@ type CaseData = {
   notes: string;
 };
 
+type TriageRecommendation = "self_care" | "schedule_gp" | "urgent";
+
 type TriageResult = {
-  recommendation: "self_care" | "schedule_gp" | "urgent";
+  recommendation: TriageRecommendation;
   reason: string;
   redFlags: string[];
   soapNote: string;
@@ -46,481 +48,62 @@ type SessionState = {
   lastTriage: TriageResult | null;
 };
 
-const CHAT_SYSTEM_PROMPT = `You are Clinic Companion, a medical education assistant.
-Rules:
-- You are not a doctor and cannot diagnose.
-- Ask concise follow-up questions when details are missing.
-- Focus on practical next steps and safety.
-- If severe symptoms appear, advise urgent care.
-- End every answer with: "This is educational, not medical advice."`;
+type JsonObject = Record<string, unknown>;
 
-export class ChatSessionDO {
-  private state: DurableObjectState;
+const MODEL = "@cf/meta/llama-3.3-70b-instruct-fp8-fast";
+const MAX_HISTORY_MESSAGES = 40;
+const MAX_MESSAGE_CHARS = 2000;
+const MAX_SUMMARY_CHARS = 1200;
 
-  constructor(state: DurableObjectState) {
-    this.state = state;
-  }
+const CHAT_SYSTEM_PROMPT = [
+  "You are Clinic Companion, a medical education assistant.",
+  "Rules:",
+  "- You are not a doctor and cannot diagnose.",
+  "- Ask concise follow-up questions if details are missing.",
+  "- Focus on practical next steps and safety.",
+  "- If severe symptoms appear, advise urgent care.",
+  'End every answer with: "This is educational, not medical advice."',
+].join("\n");
 
-  async fetch(request: Request): Promise<Response> {
-    const url = new URL(request.url);
+const CASE_EXTRACT_PROMPT = [
+  "Extract medical intake into JSON only.",
+  "Return an object with exact keys:",
+  "symptoms(string[]), duration(string), severity(string), feverC(number|null),",
+  "redFlags(string[]), meds(string[]), allergies(string[]), notes(string).",
+  "Use null for unknown fever, and empty arrays/strings for unknown fields.",
+].join(" ");
 
-    if (request.method === "GET" && url.pathname === "/state") {
-      const session = await this.getState();
-      return json({ session });
-    }
-
-    if (request.method === "POST" && url.pathname === "/append-chat") {
-      const body = (await request.json()) as { message?: ChatMessage };
-      if (!body.message || !body.message.role || !body.message.content) {
-        return json({ error: "Invalid chat message" }, 400);
-      }
-      const session = await this.getState();
-      session.history.push(body.message);
-      session.history = session.history.slice(-40);
-      await this.saveState(session);
-      return json({ ok: true });
-    }
-
-    if (request.method === "POST" && url.pathname === "/set-profile") {
-      const body = (await request.json()) as { profile?: Profile };
-      const session = await this.getState();
-      session.profile = {
-        ...session.profile,
-        ...sanitizeProfile(body.profile || {}),
-      };
-      await this.saveState(session);
-      return json({ ok: true, profile: session.profile });
-    }
-
-    if (request.method === "POST" && url.pathname === "/set-summary") {
-      const body = (await request.json()) as { conversationSummary?: string };
-      const session = await this.getState();
-      session.conversationSummary = (body.conversationSummary || "").slice(0, 1200);
-      await this.saveState(session);
-      return json({ ok: true });
-    }
-
-    if (request.method === "POST" && url.pathname === "/set-triage") {
-      const body = (await request.json()) as { draftCase?: CaseData; lastTriage?: TriageResult };
-      const session = await this.getState();
-      session.draftCase = body.draftCase ? normalizeCaseData(body.draftCase) : null;
-      session.lastTriage = body.lastTriage ? normalizeTriageResult(body.lastTriage) : null;
-      await this.saveState(session);
-      return json({ ok: true });
-    }
-
-    if (request.method === "POST" && url.pathname === "/reset") {
-      await this.saveState(createDefaultState());
-      return json({ ok: true });
-    }
-
-    return json({ error: "Not found" }, 404);
-  }
-
-  private async getState(): Promise<SessionState> {
-    const state = await this.state.storage.get<SessionState>("session");
-    return normalizeSessionState(state);
-  }
-
-  private async saveState(session: SessionState): Promise<void> {
-    await this.state.storage.put("session", session);
-  }
-}
-
-export default {
-  async fetch(request: Request, env: Env): Promise<Response> {
-    const url = new URL(request.url);
-
-    if (request.method === "GET" && (url.pathname === "/" || url.pathname === "/index.html")) {
-      return new Response(APP_HTML, {
-        headers: { "content-type": "text/html; charset=utf-8" },
-      });
-    }
-
-    if (request.method === "POST" && url.pathname === "/api/profile") {
-      return handleProfile(request, env);
-    }
-
-    if (request.method === "POST" && url.pathname === "/api/chat") {
-      return handleChat(request, env);
-    }
-
-    if (request.method === "POST" && url.pathname === "/api/triage") {
-      return handleTriage(request, env);
-    }
-
-    if (request.method === "POST" && url.pathname === "/api/reset") {
-      return handleReset(request, env);
-    }
-
-    return json({ error: "Not found" }, 404);
-  },
-} satisfies ExportedHandler<Env>;
-
-async function handleProfile(request: Request, env: Env): Promise<Response> {
-  const { sessionId, profile } = (await request.json()) as {
-    sessionId?: string;
-    profile?: Profile;
-  };
-  if (!isValidSessionId(sessionId) || !profile) {
-    return json({ error: "sessionId and profile are required" }, 400);
-  }
-  const stub = getSessionStub(env, sessionId);
-  const res = await stub.fetch("https://do/set-profile", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ profile }),
-  });
-  return passthroughJson(res);
-}
-
-async function handleChat(request: Request, env: Env): Promise<Response> {
-  try {
-    const { sessionId, message } = (await request.json()) as {
-      sessionId?: string;
-      message?: string;
-    };
-
-    if (!isValidSessionId(sessionId) || !message?.trim()) {
-      return json({ error: "sessionId and message are required" }, 400);
-    }
-
-    const stub = getSessionStub(env, sessionId);
-    const state = await getSessionState(stub);
-
-    const messages = [
-      { role: "system", content: CHAT_SYSTEM_PROMPT },
-      {
-        role: "system",
-        content:
-          "Patient profile: " + JSON.stringify(state.profile) +
-          "\nConversation summary: " + (state.conversationSummary || "(empty)"),
-      },
-      ...state.history.map((m) => ({ role: m.role, content: m.content })),
-      { role: "user", content: message.trim() },
-    ];
-
-    const aiResult = (await env.AI.run("@cf/meta/llama-3.3-70b-instruct-fp8-fast", {
-      messages,
-      max_tokens: 420,
-      temperature: 0.35,
-    })) as { response?: string };
-
-    const assistant = aiResult.response?.trim() || "I could not generate a response. Please try again.";
-    const now = new Date().toISOString();
-
-    await stub.fetch("https://do/append-chat", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        message: { role: "user", content: message.trim(), timestamp: now },
-      }),
-    });
-
-    await stub.fetch("https://do/append-chat", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        message: { role: "assistant", content: assistant, timestamp: now },
-      }),
-    });
-
-    const latestState = await getSessionState(stub);
-    if (latestState.history.length % 6 === 0) {
-      try {
-        const summary = await buildConversationSummary(env, latestState.history);
-        await stub.fetch("https://do/set-summary", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ conversationSummary: summary }),
-        });
-      } catch {
-        // Summary refresh is non-critical. Keep chat response successful.
-      }
-    }
-
-    return json({ reply: assistant });
-  } catch (error) {
-    return json({ error: toErrorMessage(error) }, 500);
-  }
-}
-
-async function handleTriage(request: Request, env: Env): Promise<Response> {
-  try {
-    const { sessionId } = (await request.json()) as { sessionId?: string };
-    if (!isValidSessionId(sessionId)) {
-      return json({ error: "sessionId is required" }, 400);
-    }
-
-    const stub = getSessionStub(env, sessionId);
-    const state = await getSessionState(stub);
-    if (state.history.length === 0) {
-      return json({ error: "No intake history found. Chat first, then run triage." }, 400);
-    }
-
-    const progress: string[] = [];
-    progress.push("1/3 Extracting structured case...");
-    const draftCase = await extractStructuredCase(env, state);
-
-    progress.push("2/3 Applying triage rules...");
-    const triage = applyTriageRules(draftCase);
-
-    progress.push("3/3 Generating SOAP note...");
-    const soapNote = await generateSoapNote(env, state, draftCase, triage);
-
-    const result: TriageResult = {
-      ...triage,
-      soapNote,
-      generatedAt: new Date().toISOString(),
-    };
-
-    await stub.fetch("https://do/set-triage", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ draftCase, lastTriage: result }),
-    });
-
-    progress.push("Done");
-    return json({ progress, draftCase, triage: result });
-  } catch (error) {
-    return json({ error: toErrorMessage(error) }, 500);
-  }
-}
-
-async function handleReset(request: Request, env: Env): Promise<Response> {
-  const { sessionId } = (await request.json()) as { sessionId?: string };
-  if (!isValidSessionId(sessionId)) {
-    return json({ error: "sessionId is required" }, 400);
-  }
-  const stub = getSessionStub(env, sessionId);
-  await stub.fetch("https://do/reset", { method: "POST" });
-  return json({ ok: true });
-}
-
-function getSessionStub(env: Env, sessionId: string): DurableObjectStub {
-  const id = env.CHAT_SESSIONS.idFromName(sessionId);
-  return env.CHAT_SESSIONS.get(id);
-}
-
-async function getSessionState(stub: DurableObjectStub): Promise<SessionState> {
-  const res = await stub.fetch("https://do/state");
-  const payload = (await res.json()) as { session: SessionState };
-  return normalizeSessionState(payload.session);
-}
-
-async function buildConversationSummary(env: Env, history: ChatMessage[]): Promise<string> {
-  const recent = history.slice(-14).map((m) => m.role + ": " + m.content).join("\n");
-  const result = (await env.AI.run("@cf/meta/llama-3.3-70b-instruct-fp8-fast", {
-    messages: [
-      {
-        role: "system",
-        content:
-          "Summarize this medical education chat in <= 120 words with important symptoms, timeline, and open questions.",
-      },
-      { role: "user", content: recent },
-    ],
-    max_tokens: 220,
-    temperature: 0.2,
-  })) as { response?: string };
-  return (result.response || "").slice(0, 1200);
-}
-
-async function extractStructuredCase(env: Env, state: SessionState): Promise<CaseData> {
-  const recentChat = state.history.slice(-20).map((m) => m.role + ": " + m.content).join("\n");
-
-  const prompt =
-    "Return only JSON with keys: symptoms(string[]), duration(string), severity(string), feverC(number|null), redFlags(string[]), meds(string[]), allergies(string[]), notes(string). " +
-    "Use null for unknown fever. If unknown fields, use empty string/array.\n" +
-    "Profile: " + JSON.stringify(state.profile) +
-    "\nSummary: " + (state.conversationSummary || "") +
-    "\nChat:\n" + recentChat;
-
-  const result = (await env.AI.run("@cf/meta/llama-3.3-70b-instruct-fp8-fast", {
-    messages: [
-      { role: "system", content: "You extract structured medical-intake JSON." },
-      { role: "user", content: prompt },
-    ],
-    max_tokens: 400,
-    temperature: 0,
-  })) as { response?: string };
-
-  const parsed = parseCaseData(result.response || "");
-  return parsed;
-}
-
-function parseCaseData(raw: string): CaseData {
-  try {
-    const maybeJson = extractFirstJsonObject(raw);
-    if (!maybeJson) return normalizeCaseData({});
-
-    const obj = JSON.parse(maybeJson) as Partial<CaseData>;
-    return normalizeCaseData(obj);
-  } catch {
-    return normalizeCaseData({});
-  }
-}
-
-function extractFirstJsonObject(text: string): string | null {
-  const start = text.indexOf("{");
-  const end = text.lastIndexOf("}");
-  if (start === -1 || end === -1 || end <= start) return null;
-  return text.slice(start, end + 1);
-}
-
-function asString(value: unknown): string {
-  return typeof value === "string" ? value : "";
-}
-
-function asStringArray(value: unknown): string[] {
-  if (!Array.isArray(value)) return [];
-  return value.filter((v): v is string => typeof v === "string").slice(0, 20);
-}
-
-function asNullableNumber(value: unknown): number | null {
-  if (typeof value !== "number" || Number.isNaN(value)) return null;
-  return value;
-}
-
-function normalizeCaseData(input: Partial<CaseData>): CaseData {
+function defaultProfile(): Profile {
   return {
-    symptoms: asStringArray(input.symptoms),
-    duration: asString(input.duration),
-    severity: asString(input.severity),
-    feverC: asNullableNumber(input.feverC),
-    redFlags: asStringArray(input.redFlags),
-    meds: asStringArray(input.meds),
-    allergies: asStringArray(input.allergies),
-    notes: asString(input.notes),
+    ageRange: "",
+    sex: "",
+    conditions: "",
+    allergies: "",
+    medications: "",
   };
 }
 
-function normalizeTriageResult(input: Partial<TriageResult>): TriageResult {
-  const recommendation = input.recommendation;
-  const safeRecommendation =
-    recommendation === "self_care" || recommendation === "schedule_gp" || recommendation === "urgent"
-      ? recommendation
-      : "schedule_gp";
-
+function defaultCaseData(): CaseData {
   return {
-    recommendation: safeRecommendation,
-    reason: asString(input.reason),
-    redFlags: asStringArray(input.redFlags),
-    soapNote: asString(input.soapNote),
-    generatedAt: asString(input.generatedAt) || new Date().toISOString(),
+    symptoms: [],
+    duration: "",
+    severity: "",
+    feverC: null,
+    redFlags: [],
+    meds: [],
+    allergies: [],
+    notes: "",
   };
 }
 
-function sanitizeProfile(profile: Profile): Profile {
+function defaultState(): SessionState {
   return {
-    ageRange: asString(profile.ageRange).slice(0, 80),
-    sex: asString(profile.sex).slice(0, 40),
-    conditions: asString(profile.conditions).slice(0, 300),
-    allergies: asString(profile.allergies).slice(0, 300),
-    medications: asString(profile.medications).slice(0, 300),
-  };
-}
-
-function normalizeSessionState(state: SessionState | undefined): SessionState {
-  if (!state) return createDefaultState();
-  return {
-    profile: sanitizeProfile(state.profile || {}),
-    history: Array.isArray(state.history)
-      ? state.history
-          .filter((m) => m && (m.role === "user" || m.role === "assistant"))
-          .map((m) => ({
-            role: m.role,
-            content: asString(m.content).slice(0, 2000),
-            timestamp: asString(m.timestamp),
-          }))
-          .slice(-40)
-      : [],
-    conversationSummary: asString(state.conversationSummary).slice(0, 1200),
-    draftCase: state.draftCase ? normalizeCaseData(state.draftCase) : null,
-    lastTriage: state.lastTriage ? normalizeTriageResult(state.lastTriage) : null,
-  };
-}
-
-function createDefaultState(): SessionState {
-  return {
-    profile: {},
+    profile: defaultProfile(),
     history: [],
     conversationSummary: "",
     draftCase: null,
     lastTriage: null,
   };
-}
-
-function isValidSessionId(sessionId?: string): sessionId is string {
-  if (!sessionId) return false;
-  return sessionId.length >= 8 && sessionId.length <= 128;
-}
-
-function applyTriageRules(data: CaseData): Omit<TriageResult, "soapNote" | "generatedAt"> {
-  const redFlags = [...data.redFlags];
-  const symptoms = data.symptoms.map((s) => s.toLowerCase());
-
-  const hasChestPain = symptoms.some((s) => s.includes("chest pain"));
-  const hasBreath = symptoms.some((s) => s.includes("shortness of breath") || s.includes("trouble breathing"));
-  const hasNeuro = symptoms.some((s) => s.includes("confusion") || s.includes("fainting"));
-  const severeFever = typeof data.feverC === "number" && data.feverC >= 39;
-
-  if (hasChestPain) redFlags.push("Chest pain");
-  if (hasBreath) redFlags.push("Breathing difficulty");
-  if (hasNeuro) redFlags.push("Neurologic warning signs");
-  if (severeFever) redFlags.push("High fever (>=39C)");
-
-  const uniqueRedFlags = Array.from(new Set(redFlags));
-
-  if (uniqueRedFlags.length > 0) {
-    return {
-      recommendation: "urgent",
-      reason: "Potential red flags detected. Prompt in-person assessment is recommended.",
-      redFlags: uniqueRedFlags,
-    };
-  }
-
-  const moderate = data.severity.toLowerCase().includes("moderate") || (typeof data.feverC === "number" && data.feverC >= 38);
-  if (moderate) {
-    return {
-      recommendation: "schedule_gp",
-      reason: "Symptoms appear non-emergent but should be evaluated by a clinician soon.",
-      redFlags: [],
-    };
-  }
-
-  return {
-    recommendation: "self_care",
-    reason: "No immediate red flags found from provided information.",
-    redFlags: [],
-  };
-}
-
-async function generateSoapNote(
-  env: Env,
-  state: SessionState,
-  draftCase: CaseData,
-  triage: Omit<TriageResult, "soapNote" | "generatedAt">,
-): Promise<string> {
-  const result = (await env.AI.run("@cf/meta/llama-3.3-70b-instruct-fp8-fast", {
-    messages: [
-      {
-        role: "system",
-        content:
-          "Write a concise SOAP note (educational draft). Include Subjective, Objective (if limited, state that), Assessment, Plan, and a brief safety disclaimer.",
-      },
-      {
-        role: "user",
-        content:
-          "Profile: " + JSON.stringify(state.profile) +
-          "\nCase: " + JSON.stringify(draftCase) +
-          "\nTriage: " + JSON.stringify(triage),
-      },
-    ],
-    max_tokens: 520,
-    temperature: 0.3,
-  })) as { response?: string };
-
-  return result.response?.trim() || "SOAP note unavailable.";
 }
 
 function json(data: unknown, status = 200): Response {
@@ -533,21 +116,452 @@ function json(data: unknown, status = 200): Response {
   });
 }
 
-async function passthroughJson(response: Response): Promise<Response> {
-  const text = await response.text();
-  return new Response(text, {
-    status: response.status,
-    headers: {
-      "content-type": "application/json; charset=utf-8",
-      "cache-control": "no-store",
-    },
-  });
-}
-
 function toErrorMessage(error: unknown): string {
   if (error instanceof Error) return error.message;
   return String(error);
 }
+
+function isRecord(value: unknown): value is JsonObject {
+  return typeof value === "object" && value !== null;
+}
+
+function asString(value: unknown, max = 500): string {
+  return typeof value === "string" ? value.trim().slice(0, max) : "";
+}
+
+function asStringArray(value: unknown, maxItems = 20, maxItemChars = 120): string[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((item): item is string => typeof item === "string")
+    .map((item) => item.trim().slice(0, maxItemChars))
+    .filter(Boolean)
+    .slice(0, maxItems);
+}
+
+function asNullableNumber(value: unknown): number | null {
+  if (typeof value !== "number" || Number.isNaN(value)) return null;
+  return value;
+}
+
+function isValidSessionId(value: unknown): value is string {
+  if (typeof value !== "string") return false;
+  return value.length >= 8 && value.length <= 128;
+}
+
+function normalizeProfile(value: unknown): Profile {
+  const obj = isRecord(value) ? value : {};
+  return {
+    ageRange: asString(obj.ageRange, 80),
+    sex: asString(obj.sex, 40),
+    conditions: asString(obj.conditions, 300),
+    allergies: asString(obj.allergies, 300),
+    medications: asString(obj.medications, 300),
+  };
+}
+
+function normalizeMessage(value: unknown): ChatMessage | null {
+  if (!isRecord(value)) return null;
+  const role = value.role;
+  if (role !== "user" && role !== "assistant") return null;
+  const content = asString(value.content, MAX_MESSAGE_CHARS);
+  if (!content) return null;
+  const timestamp = asString(value.timestamp, 80) || new Date().toISOString();
+  return { role, content, timestamp };
+}
+
+function normalizeCaseData(value: unknown): CaseData {
+  const obj = isRecord(value) ? value : {};
+  return {
+    symptoms: asStringArray(obj.symptoms),
+    duration: asString(obj.duration, 200),
+    severity: asString(obj.severity, 120),
+    feverC: asNullableNumber(obj.feverC),
+    redFlags: asStringArray(obj.redFlags),
+    meds: asStringArray(obj.meds),
+    allergies: asStringArray(obj.allergies),
+    notes: asString(obj.notes, 1000),
+  };
+}
+
+function normalizeRecommendation(value: unknown): TriageRecommendation {
+  return value === "self_care" || value === "schedule_gp" || value === "urgent" ? value : "schedule_gp";
+}
+
+function normalizeTriageResult(value: unknown): TriageResult | null {
+  if (!isRecord(value)) return null;
+  return {
+    recommendation: normalizeRecommendation(value.recommendation),
+    reason: asString(value.reason, 500),
+    redFlags: asStringArray(value.redFlags),
+    soapNote: asString(value.soapNote, 5000),
+    generatedAt: asString(value.generatedAt, 80) || new Date().toISOString(),
+  };
+}
+
+function normalizeState(value: unknown): SessionState {
+  if (!isRecord(value)) return defaultState();
+
+  const history = Array.isArray(value.history)
+    ? value.history.map(normalizeMessage).filter((m): m is ChatMessage => Boolean(m)).slice(-MAX_HISTORY_MESSAGES)
+    : [];
+
+  return {
+    profile: normalizeProfile(value.profile),
+    history,
+    conversationSummary: asString(value.conversationSummary, MAX_SUMMARY_CHARS),
+    draftCase: value.draftCase ? normalizeCaseData(value.draftCase) : null,
+    lastTriage: normalizeTriageResult(value.lastTriage),
+  };
+}
+
+async function safeJson(request: Request): Promise<JsonObject | null> {
+  try {
+    const body = (await request.json()) as unknown;
+    return isRecord(body) ? body : null;
+  } catch {
+    return null;
+  }
+}
+
+function extractFirstJsonObject(raw: string): string | null {
+  const start = raw.indexOf("{");
+  const end = raw.lastIndexOf("}");
+  if (start < 0 || end < 0 || end <= start) return null;
+  return raw.slice(start, end + 1);
+}
+
+async function callModel(env: Env, messages: Array<{ role: "system" | "user" | "assistant"; content: string }>, opts?: { maxTokens?: number; temperature?: number }): Promise<string> {
+  const result = (await env.AI.run(MODEL, {
+    messages,
+    max_tokens: opts?.maxTokens ?? 420,
+    temperature: opts?.temperature ?? 0.35,
+  })) as { response?: string };
+  return (result.response || "").trim();
+}
+
+async function callDo<T>(stub: DurableObjectStub, path: string, init?: RequestInit): Promise<T> {
+  const response = await stub.fetch("https://do" + path, init);
+  const raw = await response.text();
+  let body: unknown = null;
+  try {
+    body = JSON.parse(raw);
+  } catch {
+    body = { error: raw || "Invalid JSON response" };
+  }
+
+  if (!response.ok) {
+    const errorMessage = isRecord(body) ? asString(body.error, 500) : "DO request failed";
+    throw new Error(errorMessage || "DO request failed");
+  }
+
+  return body as T;
+}
+
+function getSessionStub(env: Env, sessionId: string): DurableObjectStub {
+  const id = env.CHAT_SESSIONS.idFromName(sessionId);
+  return env.CHAT_SESSIONS.get(id);
+}
+
+async function getSessionState(stub: DurableObjectStub): Promise<SessionState> {
+  const payload = await callDo<{ session: unknown }>(stub, "/state");
+  return normalizeState(payload.session);
+}
+
+async function appendChat(stub: DurableObjectStub, message: ChatMessage): Promise<void> {
+  await callDo(stub, "/append-chat", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ message }),
+  });
+}
+
+async function maybeRefreshSummary(env: Env, stub: DurableObjectStub, history: ChatMessage[]): Promise<void> {
+  if (history.length === 0 || history.length % 6 !== 0) return;
+
+  const recent = history.slice(-14).map((m) => m.role + ": " + m.content).join("\n");
+
+  try {
+    const summary = await callModel(
+      env,
+      [
+        {
+          role: "system",
+          content: "Summarize this intake chat in <=120 words with symptoms, timeline, red flags, and open questions.",
+        },
+        { role: "user", content: recent },
+      ],
+      { maxTokens: 220, temperature: 0.2 },
+    );
+
+    await callDo(stub, "/set-summary", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ conversationSummary: summary.slice(0, MAX_SUMMARY_CHARS) }),
+    });
+  } catch {
+    // Do not block chat responses on summary refresh failures.
+  }
+}
+
+async function extractCase(env: Env, state: SessionState): Promise<CaseData> {
+  const context = state.history.slice(-20).map((m) => m.role + ": " + m.content).join("\n");
+
+  const raw = await callModel(
+    env,
+    [
+      { role: "system", content: CASE_EXTRACT_PROMPT },
+      {
+        role: "user",
+        content:
+          "Profile: " + JSON.stringify(state.profile) +
+          "\nConversation summary: " + (state.conversationSummary || "(none)") +
+          "\nChat:\n" + context,
+      },
+    ],
+    { maxTokens: 380, temperature: 0 },
+  );
+
+  const jsonSlice = extractFirstJsonObject(raw);
+  if (!jsonSlice) return defaultCaseData();
+
+  try {
+    return normalizeCaseData(JSON.parse(jsonSlice));
+  } catch {
+    return defaultCaseData();
+  }
+}
+
+function applyTriageRules(data: CaseData): Omit<TriageResult, "soapNote" | "generatedAt"> {
+  const redFlags = new Set(data.redFlags.map((flag) => flag.trim()).filter(Boolean));
+  const symptoms = data.symptoms.map((s) => s.toLowerCase());
+
+  if (symptoms.some((s) => s.includes("chest pain"))) redFlags.add("Chest pain");
+  if (symptoms.some((s) => s.includes("shortness of breath") || s.includes("trouble breathing"))) redFlags.add("Breathing difficulty");
+  if (symptoms.some((s) => s.includes("faint") || s.includes("confusion"))) redFlags.add("Neurologic warning signs");
+  if (typeof data.feverC === "number" && data.feverC >= 39) redFlags.add("High fever (>=39C)");
+
+  const list = Array.from(redFlags);
+  if (list.length > 0) {
+    return {
+      recommendation: "urgent",
+      reason: "Potential red flags were detected from the provided information.",
+      redFlags: list,
+    };
+  }
+
+  const moderate = data.severity.toLowerCase().includes("moderate") || (typeof data.feverC === "number" && data.feverC >= 38);
+  if (moderate) {
+    return {
+      recommendation: "schedule_gp",
+      reason: "Symptoms appear non-emergent but should be reviewed by a clinician soon.",
+      redFlags: [],
+    };
+  }
+
+  return {
+    recommendation: "self_care",
+    reason: "No immediate red flags were detected from the provided details.",
+    redFlags: [],
+  };
+}
+
+async function generateSoapNote(
+  env: Env,
+  state: SessionState,
+  draftCase: CaseData,
+  triage: Omit<TriageResult, "soapNote" | "generatedAt">,
+): Promise<string> {
+  const note = await callModel(
+    env,
+    [
+      {
+        role: "system",
+        content:
+          "Write a concise educational SOAP note with sections Subjective, Objective, Assessment, Plan, and one-line safety disclaimer.",
+      },
+      {
+        role: "user",
+        content:
+          "Profile: " + JSON.stringify(state.profile) +
+          "\nCase: " + JSON.stringify(draftCase) +
+          "\nTriage: " + JSON.stringify(triage),
+      },
+    ],
+    { maxTokens: 520, temperature: 0.3 },
+  );
+
+  return note || "SOAP note unavailable.";
+}
+
+export class ChatSessionDO {
+  constructor(private readonly state: DurableObjectState) {}
+
+  async fetch(request: Request): Promise<Response> {
+    const url = new URL(request.url);
+
+    if (request.method === "GET" && url.pathname === "/state") {
+      const session = normalizeState(await this.state.storage.get("session"));
+      return json({ session });
+    }
+
+    if (request.method === "POST" && url.pathname === "/append-chat") {
+      const body = await safeJson(request);
+      const message = normalizeMessage(body?.message);
+      if (!message) return json({ error: "Invalid chat message" }, 400);
+
+      const session = normalizeState(await this.state.storage.get("session"));
+      session.history.push(message);
+      session.history = session.history.slice(-MAX_HISTORY_MESSAGES);
+      await this.state.storage.put("session", session);
+      return json({ ok: true });
+    }
+
+    if (request.method === "POST" && url.pathname === "/set-profile") {
+      const body = await safeJson(request);
+      const session = normalizeState(await this.state.storage.get("session"));
+      session.profile = {
+        ...session.profile,
+        ...normalizeProfile(body?.profile),
+      };
+      await this.state.storage.put("session", session);
+      return json({ ok: true, profile: session.profile });
+    }
+
+    if (request.method === "POST" && url.pathname === "/set-summary") {
+      const body = await safeJson(request);
+      const session = normalizeState(await this.state.storage.get("session"));
+      session.conversationSummary = asString(body?.conversationSummary, MAX_SUMMARY_CHARS);
+      await this.state.storage.put("session", session);
+      return json({ ok: true });
+    }
+
+    if (request.method === "POST" && url.pathname === "/set-triage") {
+      const body = await safeJson(request);
+      const session = normalizeState(await this.state.storage.get("session"));
+      session.draftCase = body?.draftCase ? normalizeCaseData(body.draftCase) : null;
+      session.lastTriage = body?.lastTriage ? normalizeTriageResult(body.lastTriage) : null;
+      await this.state.storage.put("session", session);
+      return json({ ok: true });
+    }
+
+    if (request.method === "POST" && url.pathname === "/reset") {
+      await this.state.storage.put("session", defaultState());
+      return json({ ok: true });
+    }
+
+    return json({ error: "Not found" }, 404);
+  }
+}
+
+export default {
+  async fetch(request: Request, env: Env): Promise<Response> {
+    const url = new URL(request.url);
+
+    if (request.method === "GET" && (url.pathname === "/" || url.pathname === "/index.html")) {
+      return new Response(APP_HTML, { headers: { "content-type": "text/html; charset=utf-8" } });
+    }
+
+    if (request.method !== "POST") {
+      return json({ error: "Method not allowed" }, 405);
+    }
+
+    const body = await safeJson(request);
+    if (!body) {
+      return json({ error: "Invalid JSON body" }, 400);
+    }
+
+    if (!isValidSessionId(body.sessionId)) {
+      return json({ error: "sessionId is required" }, 400);
+    }
+
+    const sessionId = body.sessionId;
+    const stub = getSessionStub(env, sessionId);
+
+    try {
+      if (url.pathname === "/api/profile") {
+        if (!isRecord(body.profile)) return json({ error: "profile is required" }, 400);
+
+        const payload = await callDo<{ profile: Profile }>(stub, "/set-profile", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ profile: body.profile }),
+        });
+        return json({ ok: true, profile: payload.profile });
+      }
+
+      if (url.pathname === "/api/chat") {
+        const userText = asString(body.message, MAX_MESSAGE_CHARS);
+        if (!userText) return json({ error: "message is required" }, 400);
+
+        const state = await getSessionState(stub);
+        const messages = [
+          { role: "system" as const, content: CHAT_SYSTEM_PROMPT },
+          {
+            role: "system" as const,
+            content:
+              "Patient profile: " + JSON.stringify(state.profile) +
+              "\nConversation summary: " + (state.conversationSummary || "(empty)"),
+          },
+          ...state.history.map((msg) => ({ role: msg.role, content: msg.content })),
+          { role: "user" as const, content: userText },
+        ];
+
+        const reply =
+          (await callModel(env, messages, { maxTokens: 420, temperature: 0.35 })) ||
+          "I could not generate a response. Please try again.";
+
+        const timestamp = new Date().toISOString();
+        await appendChat(stub, { role: "user", content: userText, timestamp });
+        await appendChat(stub, { role: "assistant", content: reply, timestamp });
+
+        const latest = await getSessionState(stub);
+        await maybeRefreshSummary(env, stub, latest.history);
+
+        return json({ reply });
+      }
+
+      if (url.pathname === "/api/triage") {
+        const state = await getSessionState(stub);
+        if (state.history.length === 0) {
+          return json({ error: "No intake history found. Chat first, then run triage." }, 400);
+        }
+
+        const progress: string[] = ["1/3 Extracting structured case..."];
+        const draftCase = await extractCase(env, state);
+
+        progress.push("2/3 Applying triage rules...");
+        const triageCore = applyTriageRules(draftCase);
+
+        progress.push("3/3 Generating SOAP note...");
+        const soapNote = await generateSoapNote(env, state, draftCase, triageCore);
+
+        const triage: TriageResult = {
+          ...triageCore,
+          soapNote,
+          generatedAt: new Date().toISOString(),
+        };
+
+        await callDo(stub, "/set-triage", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ draftCase, lastTriage: triage }),
+        });
+
+        progress.push("Done");
+        return json({ progress, draftCase, triage });
+      }
+
+      if (url.pathname === "/api/reset") {
+        await callDo(stub, "/reset", { method: "POST" });
+        return json({ ok: true });
+      }
+
+      return json({ error: "Not found" }, 404);
+    } catch (error) {
+      return json({ error: toErrorMessage(error) }, 500);
+    }
+  },
+} satisfies ExportedHandler<Env>;
 
 const APP_HTML = `<!doctype html>
 <html lang="en">
@@ -576,11 +590,7 @@ const APP_HTML = `<!doctype html>
           radial-gradient(circle at 90% 100%, #d8e9d8 0, transparent 30%),
           var(--bg);
       }
-      .container {
-        max-width: 1080px;
-        margin: 0 auto;
-        padding: 16px;
-      }
+      .container { max-width: 1080px; margin: 0 auto; padding: 16px; }
       .hero {
         border-radius: 16px;
         color: white;
@@ -588,42 +598,17 @@ const APP_HTML = `<!doctype html>
         background: linear-gradient(120deg, #0f8b8d, #4f9d69);
         box-shadow: 0 8px 20px rgba(15, 139, 141, 0.22);
       }
-      .grid {
-        margin-top: 14px;
-        display: grid;
-        grid-template-columns: 1fr 1fr;
-        gap: 14px;
-      }
-      .card {
-        background: var(--surface);
-        border: 1px solid var(--border);
-        border-radius: 14px;
-        padding: 12px;
-      }
+      .grid { margin-top: 14px; display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+      .card { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 12px; }
       h1, h2, h3 { margin: 0 0 10px; }
       h1 { font-size: 1.65rem; }
       h2 { font-size: 1.1rem; }
-      .tiny {
-        color: var(--muted);
-        font-size: 0.92rem;
+      .tiny { color: var(--muted); font-size: 0.92rem; }
+      .fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+      input, textarea {
+        width: 100%; border: 1px solid var(--border); border-radius: 10px; padding: 9px; font: inherit;
       }
-      .fields {
-        display: grid;
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-        gap: 8px;
-      }
-      input, textarea, select {
-        width: 100%;
-        border: 1px solid var(--border);
-        border-radius: 10px;
-        padding: 9px;
-        font: inherit;
-      }
-      .chat {
-        display: flex;
-        flex-direction: column;
-        gap: 8px;
-      }
+      .chat { display: flex; flex-direction: column; gap: 8px; }
       .messages {
         border: 1px solid var(--border);
         border-radius: 12px;
@@ -635,34 +620,12 @@ const APP_HTML = `<!doctype html>
         flex-direction: column;
         gap: 8px;
       }
-      .bubble {
-        max-width: 86%;
-        padding: 9px 11px;
-        border-radius: 11px;
-        white-space: pre-wrap;
-        line-height: 1.4;
-      }
-      .user {
-        align-self: flex-end;
-        background: #e2f5f6;
-        border: 1px solid #bde4e4;
-      }
-      .assistant {
-        align-self: flex-start;
-        background: #f4f9f6;
-        border: 1px solid #d8ebe0;
-      }
-      .actions {
-        display: flex;
-        gap: 8px;
-        flex-wrap: wrap;
-      }
+      .bubble { max-width: 86%; padding: 9px 11px; border-radius: 11px; white-space: pre-wrap; line-height: 1.4; }
+      .user { align-self: flex-end; background: #e2f5f6; border: 1px solid #bde4e4; }
+      .assistant { align-self: flex-start; background: #f4f9f6; border: 1px solid #d8ebe0; }
+      .actions { display: flex; gap: 8px; flex-wrap: wrap; }
       button {
-        border: 0;
-        border-radius: 10px;
-        padding: 10px 12px;
-        font-weight: 700;
-        cursor: pointer;
+        border: 0; border-radius: 10px; padding: 10px 12px; font-weight: 700; cursor: pointer;
       }
       .primary { background: var(--accent); color: #fff; }
       .secondary { background: #eaf2f2; color: var(--ink); }
@@ -670,13 +633,8 @@ const APP_HTML = `<!doctype html>
       .danger { background: #f7e6e6; color: var(--warning); }
       .status { color: var(--muted); min-height: 20px; }
       pre {
-        background: #f7fbfb;
-        border: 1px solid var(--border);
-        border-radius: 10px;
-        padding: 10px;
-        max-height: 30vh;
-        overflow: auto;
-        margin: 8px 0 0;
+        background: #f7fbfb; border: 1px solid var(--border); border-radius: 10px;
+        padding: 10px; max-height: 30vh; overflow: auto; margin: 8px 0 0;
       }
       @media (max-width: 900px) {
         .grid { grid-template-columns: 1fr; }
