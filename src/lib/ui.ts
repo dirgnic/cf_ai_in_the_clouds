@@ -126,30 +126,55 @@ export const APP_HTML = `<!doctype html>
       var progressPanel = document.getElementById('progressPanel');
       var resultPanel = document.getElementById('resultPanel');
 
+      var sessionId = '';
       var sessionIdKey = 'clinic-companion-session-id';
-      var sessionId = localStorage.getItem(sessionIdKey);
-      if (!sessionId) {
-        sessionId = crypto.randomUUID();
-        localStorage.setItem(sessionIdKey, sessionId);
+
+      function makeSessionId() {
+        if (window.crypto && typeof window.crypto.randomUUID === 'function') {
+          return window.crypto.randomUUID();
+        }
+        return 'sess-' + Date.now() + '-' + Math.floor(Math.random() * 1e9);
       }
 
-      addBubble('assistant', 'Hi. I can gather symptom details, then run triage and draft a SOAP note. This is educational, not medical advice.');
-
-      sendBtn.addEventListener('click', sendMessage);
-      triageBtn.addEventListener('click', runTriage);
-      downloadBtn.addEventListener('click', downloadMarkdown);
-      resetBtn.addEventListener('click', resetAll);
-      saveProfileBtn.addEventListener('click', saveProfile);
-      saveModeBtn.addEventListener('click', saveMode);
-      voiceBtn.addEventListener('click', startVoice);
-      glossaryBtn.addEventListener('click', lookupGlossary);
-
-      prompt.addEventListener('keydown', function(event) {
-        if (event.key === 'Enter' && !event.shiftKey) {
-          event.preventDefault();
-          sendMessage();
+      function getOrCreateSessionId() {
+        try {
+          var stored = localStorage.getItem(sessionIdKey);
+          if (stored) return stored;
+          var created = makeSessionId();
+          localStorage.setItem(sessionIdKey, created);
+          return created;
+        } catch (_) {
+          return makeSessionId();
         }
-      });
+      }
+
+      function bindEvents() {
+        if (!sendBtn || !triageBtn || !downloadBtn || !resetBtn || !saveProfileBtn || !saveModeBtn || !voiceBtn || !glossaryBtn || !prompt) {
+          setStatus('UI initialization failed: missing DOM nodes.', true);
+          return;
+        }
+
+        sendBtn.addEventListener('click', sendMessage);
+        triageBtn.addEventListener('click', runTriage);
+        downloadBtn.addEventListener('click', downloadMarkdown);
+        resetBtn.addEventListener('click', resetAll);
+        saveProfileBtn.addEventListener('click', saveProfile);
+        saveModeBtn.addEventListener('click', saveMode);
+        voiceBtn.addEventListener('click', startVoice);
+        glossaryBtn.addEventListener('click', lookupGlossary);
+
+        prompt.addEventListener('keydown', function(event) {
+          if (event.key === 'Enter' && !event.shiftKey) {
+            event.preventDefault();
+            sendMessage();
+          }
+        });
+      }
+
+      sessionId = getOrCreateSessionId();
+      bindEvents();
+      addBubble('assistant', 'Hi. I can gather symptom details, then run triage and draft a SOAP note. This is educational, not medical advice.');
+      setStatus('UI ready');
 
       async function api(path, payload, timeoutMs) {
         var controller = new AbortController();
