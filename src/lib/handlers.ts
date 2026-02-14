@@ -15,11 +15,90 @@ import { applyTriageRules } from "./triage";
 import { asString, defaultState, normalizeMode, normalizeProfile } from "./validation";
 import type { Env, JsonObject, TriageResult } from "./types";
 
+type WorkflowTriageValue = {
+  progress: string[];
+  draftCase: unknown;
+  triage: TriageResult;
+};
+
 function extractWorkflowValue(result: unknown): unknown {
   if (typeof result === "object" && result !== null && "value" in result) {
     return (result as { value: unknown }).value;
   }
   return result;
+}
+
+function isWorkflowTriageValue(value: unknown): value is WorkflowTriageValue {
+  if (typeof value !== "object" || value === null) return false;
+  const maybe = value as Partial<WorkflowTriageValue>;
+  return Array.isArray(maybe.progress) && typeof maybe.triage === "object" && maybe.triage !== null;
+}
+
+async function resolveWorkflowResult(instance: unknown): Promise<unknown> {
+  if (instance && typeof instance === "object") {
+    const maybe = instance as Record<string, unknown>;
+
+    if (typeof maybe.result === "function") {
+      return (maybe.result as () => Promise<unknown>)();
+    }
+
+    if (typeof maybe.output === "function") {
+      return (maybe.output as () => Promise<unknown>)();
+    }
+
+    if (maybe.result && typeof (maybe.result as Promise<unknown>).then === "function") {
+      return maybe.result;
+    }
+
+    if (maybe.output && typeof (maybe.output as Promise<unknown>).then === "function") {
+      return maybe.output;
+    }
+  }
+
+  return instance;
+}
+
+async function runLocalTriagePipeline(env: Env, state: ReturnType<typeof defaultState>): Promise<WorkflowTriageValue> {
+  const progress: string[] = ["1/3 Extracting structured case..."];
+  const draftCase = await extractCase(env, state);
+
+  progress.push("2/3 Applying triage rules...");
+  const triageCore = applyTriageRules(draftCase);
+
+  progress.push("3/3 Generating SOAP note...");
+  const soapNote = await generateSoapNote(env, state, draftCase, triageCore);
+
+  const triage: TriageResult = {
+    ...triageCore,
+    soapNote,
+    generatedAt: new Date().toISOString(),
+  };
+
+  progress.push("Done");
+  return { progress, draftCase, triage };
+}
+
+async function tryWorkflowTriage(env: Env, state: ReturnType<typeof defaultState>): Promise<{ value?: WorkflowTriageValue; error?: string }> {
+  if (!env.TRIAGE_WORKFLOW) return { error: "Workflow binding not configured" };
+
+  try {
+    let instance: unknown;
+    try {
+      instance = await env.TRIAGE_WORKFLOW.create({ params: { state } });
+    } catch {
+      // Some preview environments may use a different create payload shape.
+      instance = await env.TRIAGE_WORKFLOW.create({ state } as unknown as { params: unknown });
+    }
+
+    const raw = await resolveWorkflowResult(instance);
+    const extracted = extractWorkflowValue(raw);
+    if (!isWorkflowTriageValue(extracted)) {
+      return { error: "Unexpected workflow output shape" };
+    }
+    return { value: extracted };
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : String(error) };
+  }
 }
 
 export async function handleProfile(body: JsonObject, stub: DurableObjectStub): Promise<Response> {
@@ -88,68 +167,19 @@ export async function handleTriage(env: Env, stub: DurableObjectStub): Promise<R
     return json({ error: "No intake history found. Chat first, then run triage." }, 400);
   }
 
-  if (env.TRIAGE_WORKFLOW) {
-    try {
-      const instance = await env.TRIAGE_WORKFLOW.create({ params: { state } });
-      const workflowResult = await instance.result();
-      const value = extractWorkflowValue(workflowResult) as {
-        progress: string[];
-        draftCase: unknown;
-        triage: TriageResult;
-      };
-
-      await setTriage(stub, value.draftCase, value.triage);
-      return json({ ...value, workflowUsed: true });
-    } catch (workflowError) {
-      // In local/preview modes, workflow binding can fail. Fall back to local pipeline.
-      const progress: string[] = ["Workflow unavailable in this environment, using local triage pipeline..."];
-      progress.push("1/3 Extracting structured case...");
-      const draftCase = await extractCase(env, state);
-
-      progress.push("2/3 Applying triage rules...");
-      const triageCore = applyTriageRules(draftCase);
-
-      progress.push("3/3 Generating SOAP note...");
-      const soapNote = await generateSoapNote(env, state, draftCase, triageCore);
-
-      const triage: TriageResult = {
-        ...triageCore,
-        soapNote,
-        generatedAt: new Date().toISOString(),
-      };
-
-      await setTriage(stub, draftCase, triage);
-      progress.push("Done");
-
-      return json({
-        progress,
-        draftCase,
-        triage,
-        workflowUsed: false,
-        workflowError: workflowError instanceof Error ? workflowError.message : String(workflowError),
-      });
-    }
+  const workflowAttempt = await tryWorkflowTriage(env, state);
+  if (workflowAttempt.value) {
+    await setTriage(stub, workflowAttempt.value.draftCase, workflowAttempt.value.triage);
+    return json({ ...workflowAttempt.value, workflowUsed: true });
   }
 
-  const progress: string[] = ["1/3 Extracting structured case..."];
-  const draftCase = await extractCase(env, state);
-
-  progress.push("2/3 Applying triage rules...");
-  const triageCore = applyTriageRules(draftCase);
-
-  progress.push("3/3 Generating SOAP note...");
-  const soapNote = await generateSoapNote(env, state, draftCase, triageCore);
-
-  const triage: TriageResult = {
-    ...triageCore,
-    soapNote,
-    generatedAt: new Date().toISOString(),
-  };
-
-  await setTriage(stub, draftCase, triage);
-
-  progress.push("Done");
-  return json({ progress, draftCase, triage });
+  const fallback = await runLocalTriagePipeline(env, state);
+  await setTriage(stub, fallback.draftCase, fallback.triage);
+  return json({
+    ...fallback,
+    workflowUsed: false,
+    workflowError: workflowAttempt.error || "Workflow unavailable in this environment",
+  });
 }
 
 export async function handleExport(stub: DurableObjectStub): Promise<Response> {
