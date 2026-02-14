@@ -12,7 +12,7 @@ import {
 import { json } from "./http";
 import { lookupGlossary, listGlossaryTerms } from "./glossary";
 import { applyTriageRules } from "./triage";
-import { asString, normalizeMode, normalizeProfile } from "./validation";
+import { asString, defaultState, normalizeMode, normalizeProfile } from "./validation";
 import type { Env, JsonObject, TriageResult } from "./types";
 
 function extractWorkflowValue(result: unknown): unknown {
@@ -37,7 +37,14 @@ export async function handleChat(body: JsonObject, env: Env, stub: DurableObject
   const userText = asString(body.message, MAX_MESSAGE_CHARS);
   if (!userText) return json({ error: "message is required" }, 400);
 
-  const state = await getSessionState(stub);
+  let state = defaultState();
+  let memoryAvailable = true;
+  try {
+    state = await getSessionState(stub);
+  } catch {
+    memoryAvailable = false;
+  }
+
   const styleInstruction = state.clinicMode === "clinician" ? "Use concise clinician language." : "Use plain patient-friendly language.";
 
   const messages = [
@@ -56,14 +63,23 @@ export async function handleChat(body: JsonObject, env: Env, stub: DurableObject
     (await callModel(env, messages, { maxTokens: 420, temperature: 0.35 })) ||
     "I could not generate a response. Please try again.";
 
-  const timestamp = new Date().toISOString();
-  await appendChat(stub, { role: "user", content: userText, timestamp });
-  await appendChat(stub, { role: "assistant", content: reply, timestamp });
+  if (memoryAvailable) {
+    try {
+      const timestamp = new Date().toISOString();
+      await appendChat(stub, { role: "user", content: userText, timestamp });
+      await appendChat(stub, { role: "assistant", content: reply, timestamp });
 
-  const latest = await getSessionState(stub);
-  await maybeRefreshSummary(env, stub, latest.history);
+      const latest = await getSessionState(stub);
+      await maybeRefreshSummary(env, stub, latest.history);
+    } catch {
+      memoryAvailable = false;
+    }
+  }
 
-  return json({ reply });
+  return json({
+    reply,
+    memoryAvailable,
+  });
 }
 
 export async function handleTriage(env: Env, stub: DurableObjectStub): Promise<Response> {
