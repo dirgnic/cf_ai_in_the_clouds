@@ -89,16 +89,46 @@ export async function handleTriage(env: Env, stub: DurableObjectStub): Promise<R
   }
 
   if (env.TRIAGE_WORKFLOW) {
-    const instance = await env.TRIAGE_WORKFLOW.create({ params: { state } });
-    const workflowResult = await instance.result();
-    const value = extractWorkflowValue(workflowResult) as {
-      progress: string[];
-      draftCase: unknown;
-      triage: TriageResult;
-    };
+    try {
+      const instance = await env.TRIAGE_WORKFLOW.create({ params: { state } });
+      const workflowResult = await instance.result();
+      const value = extractWorkflowValue(workflowResult) as {
+        progress: string[];
+        draftCase: unknown;
+        triage: TriageResult;
+      };
 
-    await setTriage(stub, value.draftCase, value.triage);
-    return json(value);
+      await setTriage(stub, value.draftCase, value.triage);
+      return json({ ...value, workflowUsed: true });
+    } catch (workflowError) {
+      // In local/preview modes, workflow binding can fail. Fall back to local pipeline.
+      const progress: string[] = ["Workflow unavailable in this environment, using local triage pipeline..."];
+      progress.push("1/3 Extracting structured case...");
+      const draftCase = await extractCase(env, state);
+
+      progress.push("2/3 Applying triage rules...");
+      const triageCore = applyTriageRules(draftCase);
+
+      progress.push("3/3 Generating SOAP note...");
+      const soapNote = await generateSoapNote(env, state, draftCase, triageCore);
+
+      const triage: TriageResult = {
+        ...triageCore,
+        soapNote,
+        generatedAt: new Date().toISOString(),
+      };
+
+      await setTriage(stub, draftCase, triage);
+      progress.push("Done");
+
+      return json({
+        progress,
+        draftCase,
+        triage,
+        workflowUsed: false,
+        workflowError: workflowError instanceof Error ? workflowError.message : String(workflowError),
+      });
+    }
   }
 
   const progress: string[] = ["1/3 Extracting structured case..."];
