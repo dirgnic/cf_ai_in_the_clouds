@@ -73,7 +73,12 @@ export default {
       if (url.pathname === "/api/reset") return handleReset(stub);
       return json({ error: "Not found" }, 404);
     } catch (error) {
-      return json({ error: toErrorMessage(error) }, 500);
+      const message = toErrorMessage(error);
+      const lower = message.toLowerCase();
+      if (lower.includes("durable object reset") || lower.includes("code was updated")) {
+        return json({ error: "Service reloading after code update. Please retry in 1-2 seconds." }, 503);
+      }
+      return json({ error: message }, 500);
     }
   },
 } satisfies ExportedHandler<Env>;

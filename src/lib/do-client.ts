@@ -3,23 +3,50 @@ import { buildSummary } from "./ai";
 import { asString, isRecord, normalizeState } from "./validation";
 import type { ChatMessage, ClinicMode, Env, Profile, SessionState } from "./types";
 
+function isDurableObjectHotReloadError(message: string): boolean {
+  const m = message.toLowerCase();
+  return m.includes("durable object reset") || m.includes("code was updated");
+}
+
+async function delay(ms: number): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 export async function callDo<T>(stub: DurableObjectStub, path: string, init?: RequestInit): Promise<T> {
-  const response = await stub.fetch("https://do" + path, init);
-  const raw = await response.text();
-  let body: unknown = null;
+  const maxAttempts = 2;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      const response = await stub.fetch("https://do" + path, init);
+      const raw = await response.text();
+      let body: unknown = null;
 
-  try {
-    body = JSON.parse(raw);
-  } catch {
-    body = { error: raw || "Invalid JSON response" };
+      try {
+        body = JSON.parse(raw);
+      } catch {
+        body = { error: raw || "Invalid JSON response" };
+      }
+
+      if (!response.ok) {
+        const errorMessage = isRecord(body) ? asString(body.error, 500) : "DO request failed";
+        if (attempt < maxAttempts && isDurableObjectHotReloadError(errorMessage || "")) {
+          await delay(75);
+          continue;
+        }
+        throw new Error(errorMessage || "DO request failed");
+      }
+
+      return body as T;
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      if (attempt < maxAttempts && isDurableObjectHotReloadError(errorMessage)) {
+        await delay(75);
+        continue;
+      }
+      throw error;
+    }
   }
 
-  if (!response.ok) {
-    const errorMessage = isRecord(body) ? asString(body.error, 500) : "DO request failed";
-    throw new Error(errorMessage || "DO request failed");
-  }
-
-  return body as T;
+  throw new Error("DO request failed");
 }
 
 export function getSessionStub(env: Env, sessionId: string): DurableObjectStub {
