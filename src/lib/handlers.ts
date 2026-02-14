@@ -162,3 +162,12 @@ export async function handleReset(stub: DurableObjectStub): Promise<Response> {
   await resetSession(stub);
   return json({ ok: true });
 }
+
+export async function handleState(stub: DurableObjectStub): Promise<Response> {
+  try {
+    const state = await getSessionState(stub);
+    return json({ state });
+  } catch {
+    return json({ state: defaultState(), degraded: true });
+  }
+}

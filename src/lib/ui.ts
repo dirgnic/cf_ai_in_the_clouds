@@ -101,6 +101,15 @@ export const APP_HTML = `<!doctype html>
       </section>
 
       <section class="card" style="margin-top:14px;">
+        <h3>Session State View</h3>
+        <div class="actions">
+          <button id="refreshStateBtn" type="button" class="secondary">Refresh Session State</button>
+          <span class="status" id="sessionIdText"></span>
+        </div>
+        <pre id="statePanel">No state loaded yet.</pre>
+      </section>
+
+      <section class="card" style="margin-top:14px;">
         <h3>Medical Glossary</h3>
         <div class="row">
           <input id="glossaryInput" placeholder="Try: triage, soap, dyspnea" />

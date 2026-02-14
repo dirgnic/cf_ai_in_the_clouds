@@ -9,6 +9,7 @@ import {
   handleMode,
   handleProfile,
   handleReset,
+  handleState,
   handleTriage,
 } from "./lib/handlers";
 import { TriageWorkflow } from "./lib/triage-workflow";
@@ -70,6 +71,7 @@ export default {
       if (url.pathname === "/api/chat") return handleChat(body, env, stub);
       if (url.pathname === "/api/triage") return handleTriage(env, stub);
       if (url.pathname === "/api/export") return handleExport(stub);
+      if (url.pathname === "/api/state") return handleState(stub);
       if (url.pathname === "/api/reset") return handleReset(stub);
       return json({ error: "Not found" }, 404);
     } catch (error) {

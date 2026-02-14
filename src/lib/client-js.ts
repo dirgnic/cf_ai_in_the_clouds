@@ -70,6 +70,7 @@ export const APP_JS = `(() => {
     const triageBtn = byId("triageBtn");
     const downloadBtn = byId("downloadBtn");
     const glossaryBtn = byId("glossaryBtn");
+    const refreshStateBtn = byId("refreshStateBtn");
     const resetBtn = byId("resetBtn");
     const voiceBtn = byId("voiceBtn");
     const clinicModeEl = byId("clinicMode");
@@ -77,13 +78,44 @@ export const APP_JS = `(() => {
     const resultPanel = byId("resultPanel");
     const glossaryInputEl = byId("glossaryInput");
     const glossaryPanel = byId("glossaryPanel");
+    const statePanel = byId("statePanel");
+    const sessionIdText = byId("sessionIdText");
 
-    if (!promptEl || !sendBtn || !saveProfileBtn || !saveModeBtn || !triageBtn || !downloadBtn || !glossaryBtn || !resetBtn || !voiceBtn || !clinicModeEl || !progressPanel || !resultPanel || !glossaryInputEl || !glossaryPanel) {
+    if (!promptEl || !sendBtn || !saveProfileBtn || !saveModeBtn || !triageBtn || !downloadBtn || !glossaryBtn || !refreshStateBtn || !resetBtn || !voiceBtn || !clinicModeEl || !progressPanel || !resultPanel || !glossaryInputEl || !glossaryPanel || !statePanel || !sessionIdText) {
       setStatus("UI init failed: missing elements", true);
       return;
     }
 
+    sessionIdText.textContent = "Session: " + sessionId;
+
     addBubble("assistant", "Hi. I can gather symptom details, then run triage and draft a SOAP note. This is educational, not medical advice.");
+
+    async function refreshState() {
+      try {
+        const body = await api("/api/state", { sessionId });
+        statePanel.textContent = JSON.stringify(body.state || {}, null, 2);
+
+        const p = body.state && body.state.profile ? body.state.profile : null;
+        if (p) {
+          const ageRangeEl = byId("ageRange");
+          const sexEl = byId("sex");
+          const conditionsEl = byId("conditions");
+          const allergiesEl = byId("allergies");
+          const medicationsEl = byId("medications");
+          if (ageRangeEl) ageRangeEl.value = p.ageRange || "";
+          if (sexEl) sexEl.value = p.sex || "";
+          if (conditionsEl) conditionsEl.value = p.conditions || "";
+          if (allergiesEl) allergiesEl.value = p.allergies || "";
+          if (medicationsEl) medicationsEl.value = p.medications || "";
+        }
+
+        if (body.state && body.state.clinicMode) {
+          clinicModeEl.value = body.state.clinicMode;
+        }
+      } catch (err) {
+        setStatus(err.message || String(err), true);
+      }
+    }
 
     async function saveProfile() {
       try {
@@ -98,6 +130,7 @@ export const APP_JS = `(() => {
             medications: (byId("medications")?.value || "").trim(),
           },
         });
+        await refreshState();
         setStatus("Profile saved");
       } catch (err) {
         setStatus(err.message || String(err), true);
@@ -107,6 +140,7 @@ export const APP_JS = `(() => {
     async function saveMode() {
       try {
         await api("/api/mode", { sessionId, mode: clinicModeEl.value });
+        await refreshState();
         setStatus("Mode saved: " + clinicModeEl.value);
       } catch (err) {
         setStatus(err.message || String(err), true);
@@ -128,7 +162,8 @@ export const APP_JS = `(() => {
       try {
         const body = await api("/api/chat", { sessionId, message: text }, 90000);
         addBubble("assistant", body.reply);
-        setStatus("Done");
+        await refreshState();
+        setStatus(body.memoryAvailable === false ? "Done (memory temporarily unavailable)" : "Done");
       } catch (err) {
         setStatus(err.message || String(err), true);
       } finally {
@@ -150,6 +185,7 @@ export const APP_JS = `(() => {
           soapNote: body.triage && body.triage.soapNote,
         }, null, 2);
         addBubble("assistant", "Triage complete. This is educational, not medical advice.");
+        await refreshState();
         setStatus("Triage complete");
       } catch (err) {
         setStatus(err.message || String(err), true);
@@ -192,6 +228,7 @@ export const APP_JS = `(() => {
         addBubble("assistant", "Session cleared. Start a new intake when ready.");
         progressPanel.textContent = "No triage yet.";
         resultPanel.textContent = "Run triage to generate output.";
+        await refreshState();
         setStatus("Session reset");
       } catch (err) {
         setStatus(err.message || String(err), true);
@@ -226,6 +263,7 @@ export const APP_JS = `(() => {
     triageBtn.addEventListener("click", runTriage);
     downloadBtn.addEventListener("click", downloadMarkdown);
     glossaryBtn.addEventListener("click", lookupGlossary);
+    refreshStateBtn.addEventListener("click", refreshState);
     resetBtn.addEventListener("click", resetSession);
     voiceBtn.addEventListener("click", startVoice);
 
@@ -242,10 +280,12 @@ export const APP_JS = `(() => {
     window.__runTriage = runTriage;
     window.__downloadMarkdown = downloadMarkdown;
     window.__lookupGlossary = lookupGlossary;
+    window.__refreshState = refreshState;
     window.__resetSession = resetSession;
     window.__startVoice = startVoice;
     window.__cc_debug = { boot: "appjs-bound", sessionId };
 
+    refreshState();
     setStatus("UI ready");
   }
 
