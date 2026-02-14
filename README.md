@@ -1,46 +1,63 @@
 # Clinic Companion (Cloudflare AI Assignment)
 
-Clinic Companion is an original medicine-themed AI app for intake + triage + SOAP drafting.
+Clinic Companion is an original, medicine-themed AI app for intake, triage, and SOAP note drafting on Cloudflare.
 
-## Requirements Coverage
+## Compliance Checklist
 
-- LLM: Workers AI Llama 3.3 (`env.AI.run`) with JSON-mode extraction
-- Workflow / coordination: Cloudflare Workflows (`TriageWorkflow`) + fallback worker pipeline
-- User input: chat + browser voice input
-- Memory/state: Durable Objects (`ChatSessionDO`) and Agents SDK class (`ClinicAgent`)
+- Repository prefix: `cf_ai_` (`cf_ai_in_the_clouds`) ✅
+- `README.md` with project docs + run instructions ✅
+- `PROMPTS.md` with AI prompts used ✅
+- Original implementation statement included ✅
 
-## Included Architecture Pieces
+## Assignment Requirements Coverage
 
-- `src/lib/clinic-agent.ts`: Agents SDK `ClinicAgent extends Agent`
-- `src/lib/triage-workflow.ts`: Workflow class using `step.do(...)`
-- `src/lib/chat-session-do.ts`: session state storage and APIs
-- `src/lib/handlers.ts`: API orchestration
-- `src/lib/ai.ts`: LLM calls, JSON extraction, SOAP generation
-- `src/lib/ui.ts`: frontend chat/voice/progress UI
+- LLM: Workers AI (`@cf/meta/llama-3.3-70b-instruct-fp8-fast`) with fallback model ✅
+- Workflow/coordination: Cloudflare Workflows (`TriageWorkflow`) + Durable Object coordination ✅
+- User input: chat + browser speech-to-text voice input ✅
+- Memory/state: Durable Objects session state (`ChatSessionDO`) ✅
 
-## Endpoints
+## Core Architecture
+
+- `src/index.ts`: request routing, static UI/JS serving, API endpoints
+- `src/lib/chat-session-do.ts`: Durable Object state storage
+- `src/lib/triage-workflow.ts`: Workflow step orchestration
+- `src/lib/clinic-agent.ts`: Agents SDK class (`Agent`)
+- `src/lib/ai.ts`: model calls, JSON extraction, SOAP generation
+- `src/lib/client-js.ts`: frontend client logic
+- `src/lib/ui.ts`: HTML shell
+
+## API Endpoints
 
 - `POST /api/profile`
-- `POST /api/mode` (`patient_friendly` or `clinician`)
+- `POST /api/mode`
 - `POST /api/chat`
 - `POST /api/triage`
-- `POST /api/export` (downloadable Markdown content)
-- `POST /api/glossary` (term lookup)
+- `POST /api/export`
+- `POST /api/glossary`
+- `POST /api/state`
 - `POST /api/reset`
 
-## Optional Extras Implemented
+## UI Features Implemented
 
-- Reset session button
-- Download SOAP note as Markdown
-- Medical glossary lookup tool
-- Clinic mode toggle (patient-friendly vs clinician)
+- Profile save form
+- Clinic mode toggle (`patient_friendly` / `clinician`)
+- Chat + voice input
+- Triage run with progress panel
+- SOAP markdown export
+- Glossary search (partial match + full term list)
+- Session state viewer (shows saved profile/history/summary/triage)
+- Session reset
 
 ## Safety Notice
 
 Educational only, not medical advice.
 Do not enter real personal health data.
 
-## Local Run
+## Originality Statement
+
+This codebase was implemented specifically for this submission workflow. No external candidate submission code was copied.
+
+## Run Locally
 
 1. Install dependencies:
 
@@ -54,13 +71,22 @@ npm install
 npx wrangler login
 ```
 
-3. Start locally:
+3. Run local preview:
 
 ```bash
 npm run dev
 ```
 
-4. Open the local URL from Wrangler.
+4. Open local URL from Wrangler (usually `http://localhost:8787`).
+
+## Quick Functional Test
+
+1. Save profile
+2. Send one chat message
+3. Click **Refresh Session State** and confirm `history` contains messages
+4. Click **Run Triage**
+5. Download SOAP markdown
+6. Test glossary lookup (`tri`)
 
 ## Deploy
 
@@ -68,14 +94,9 @@ npm run dev
 npm run deploy
 ```
 
-## Demo Script (30 sec)
+After deploy, paste live URL below:
 
-1. Enter symptom details in chat.
-2. Optionally save profile and clinic mode.
-3. Click **Run Triage**.
-4. Show workflow progress and SOAP output.
-5. Click **Download SOAP .md**.
-6. Show glossary lookup.
+- Live URL: `<your deployed worker url>`
 
 ## Submission
 
