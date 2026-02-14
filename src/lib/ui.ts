@@ -88,12 +88,86 @@ export const APP_HTML = `<!doctype html>
         function fallbackBootstrap() {
           if (window.__cc_bootstrapDone) return;
           var sendBtn = byId("sendBtn");
+          var saveProfileBtn = byId("saveProfile");
+          var saveModeBtn = byId("saveMode");
+          var triageBtn = byId("triageBtn");
+          var downloadBtn = byId("downloadBtn");
+          var glossaryBtn = byId("glossaryBtn");
+          var refreshStateBtn = byId("refreshStateBtn");
+          var resetBtn = byId("resetBtn");
+          var voiceBtn = byId("voiceBtn");
           var prompt = byId("prompt");
-          if (!sendBtn || !prompt) {
+          var clinicModeEl = byId("clinicMode");
+          var glossaryInputEl = byId("glossaryInput");
+          var glossaryPanel = byId("glossaryPanel");
+          var progressPanel = byId("progressPanel");
+          var resultPanel = byId("resultPanel");
+          var statePanel = byId("statePanel");
+          var sessionIdText = byId("sessionIdText");
+          if (!sendBtn || !prompt || !saveProfileBtn || !saveModeBtn || !triageBtn || !downloadBtn || !glossaryBtn || !refreshStateBtn || !resetBtn || !voiceBtn || !clinicModeEl || !glossaryInputEl || !glossaryPanel || !progressPanel || !resultPanel || !statePanel || !sessionIdText) {
             setStatus("UI failed to initialize.", true);
             return;
           }
           var sessionId = getSessionId();
+          sessionIdText.textContent = "Session: " + sessionId;
+
+          function api(path, payload, timeoutMs) {
+            var controller = new AbortController();
+            var timeout = setTimeout(function () { controller.abort(); }, timeoutMs || 90000);
+            return fetch(path, {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify(payload || {}),
+              signal: controller.signal
+            })
+              .then(function (r) {
+                return r.json().then(function (b) {
+                  if (!r.ok) throw new Error((b && b.error) || "Request failed");
+                  return b;
+                });
+              })
+              .finally(function () {
+                clearTimeout(timeout);
+              });
+          }
+
+          window.__refreshState = function () {
+            return api("/api/state", { sessionId: sessionId }, 60000)
+              .then(function (body) {
+                statePanel.textContent = JSON.stringify(body.state || {}, null, 2);
+                if (body.state && body.state.clinicMode) {
+                  clinicModeEl.value = body.state.clinicMode;
+                }
+              })
+              .catch(function (err) {
+                setStatus(err && err.message ? err.message : String(err), true);
+              });
+          };
+
+          window.__saveProfile = function () {
+            setStatus("Saving profile...");
+            return api("/api/profile", {
+              sessionId: sessionId,
+              profile: {
+                ageRange: (byId("ageRange") && byId("ageRange").value || "").trim(),
+                sex: (byId("sex") && byId("sex").value || "").trim(),
+                conditions: (byId("conditions") && byId("conditions").value || "").trim(),
+                allergies: (byId("allergies") && byId("allergies").value || "").trim(),
+                medications: (byId("medications") && byId("medications").value || "").trim()
+              }
+            }, 60000)
+              .then(function () { return window.__refreshState(); })
+              .then(function () { setStatus("Profile saved (fallback mode)"); })
+              .catch(function (err) { setStatus(err && err.message ? err.message : String(err), true); });
+          };
+
+          window.__saveMode = function () {
+            return api("/api/mode", { sessionId: sessionId, mode: clinicModeEl.value }, 60000)
+              .then(function () { return window.__refreshState(); })
+              .then(function () { setStatus("Mode saved: " + clinicModeEl.value + " (fallback mode)"); })
+              .catch(function (err) { setStatus(err && err.message ? err.message : String(err), true); });
+          };
+
           window.__sendMessage = function () {
             var text = (prompt.value || "").trim();
             if (!text) {
@@ -102,17 +176,14 @@ export const APP_HTML = `<!doctype html>
             }
             setStatus("Thinking...");
             sendBtn.disabled = true;
-            fetch("/api/chat", {
-              method: "POST",
-              headers: { "content-type": "application/json" },
-              body: JSON.stringify({ sessionId: sessionId, message: text })
-            })
-              .then(function (r) { return r.json().then(function (b) { return { ok: r.ok, body: b }; }); })
+            api("/api/chat", { sessionId: sessionId, message: text }, 90000)
               .then(function (res) {
-                if (!res.ok) throw new Error(res.body.error || "Request failed");
                 addBubble("user", text);
-                addBubble("assistant", res.body.reply || "(no reply)");
+                addBubble("assistant", res.reply || "(no reply)");
                 prompt.value = "";
+                return window.__refreshState();
+              })
+              .then(function () {
                 setStatus("Done (fallback mode)");
               })
               .catch(function (err) {
@@ -122,13 +193,136 @@ export const APP_HTML = `<!doctype html>
                 sendBtn.disabled = false;
               });
           };
+
+          window.__runTriage = function () {
+            triageBtn.disabled = true;
+            setStatus("Running triage...");
+            progressPanel.textContent = "Starting...";
+            return api("/api/triage", { sessionId: sessionId }, 120000)
+              .then(function (body) {
+                progressPanel.textContent = (body.progress || []).join("\\n");
+                resultPanel.textContent = JSON.stringify({
+                  draftCase: body.draftCase,
+                  triage: body.triage,
+                  soapNote: body.triage && body.triage.soapNote
+                }, null, 2);
+                addBubble("assistant", "Triage complete. This is educational, not medical advice.");
+                return window.__refreshState();
+              })
+              .then(function () {
+                setStatus("Triage complete (fallback mode)");
+              })
+              .catch(function (err) {
+                setStatus(err && err.message ? err.message : String(err), true);
+              })
+              .finally(function () {
+                triageBtn.disabled = false;
+              });
+          };
+
+          window.__downloadMarkdown = function () {
+            return api("/api/export", { sessionId: sessionId }, 60000)
+              .then(function (body) {
+                var blob = new Blob([body.markdown], { type: "text/markdown;charset=utf-8" });
+                var link = document.createElement("a");
+                link.href = URL.createObjectURL(blob);
+                link.download = "clinic-companion-soap.md";
+                link.click();
+                URL.revokeObjectURL(link.href);
+                setStatus("Downloaded markdown (fallback mode)");
+              })
+              .catch(function (err) {
+                setStatus(err && err.message ? err.message : String(err), true);
+              });
+          };
+
+          window.__lookupGlossary = function () {
+            var term = (glossaryInputEl.value || "").trim();
+            return api("/api/glossary", { term: term }, 60000)
+              .then(function (body) {
+                var terms = Array.isArray(body.terms) ? body.terms : [];
+                var matches = Array.isArray(body.matches) ? body.matches : [];
+                var matchedSet = {};
+                for (var i = 0; i < matches.length; i++) matchedSet[matches[i].term] = true;
+                var lines = [];
+                lines.push("Query: " + (body.query || "(empty)"));
+                lines.push("");
+                if (matches.length === 0) {
+                  lines.push("Matches: none");
+                } else {
+                  lines.push("Matches:");
+                  for (var j = 0; j < matches.length; j++) {
+                    lines.push("- " + matches[j].term + ": " + matches[j].definition);
+                  }
+                }
+                lines.push("");
+                lines.push("All terms:");
+                for (var k = 0; k < terms.length; k++) {
+                  lines.push((matchedSet[terms[k]] ? "* " : "- ") + terms[k]);
+                }
+                glossaryPanel.textContent = lines.join("\\n");
+              })
+              .catch(function (err) {
+                setStatus(err && err.message ? err.message : String(err), true);
+              });
+          };
+
+          window.__resetSession = function () {
+            return api("/api/reset", { sessionId: sessionId }, 60000)
+              .then(function () {
+                var messages = byId("messages");
+                if (messages) messages.innerHTML = "";
+                addBubble("assistant", "Session cleared. Start a new intake when ready.");
+                progressPanel.textContent = "No triage yet.";
+                resultPanel.textContent = "Run triage to generate output.";
+                return window.__refreshState();
+              })
+              .then(function () {
+                setStatus("Session reset (fallback mode)");
+              })
+              .catch(function (err) {
+                setStatus(err && err.message ? err.message : String(err), true);
+              });
+          };
+
+          window.__startVoice = function () {
+            var SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+            if (!SpeechRecognition) {
+              setStatus("Speech recognition not supported in this browser.", true);
+              return;
+            }
+            var recognition = new SpeechRecognition();
+            recognition.lang = "en-US";
+            recognition.interimResults = false;
+            recognition.maxAlternatives = 1;
+            setStatus("Listening...");
+            recognition.start();
+            recognition.onresult = function (event) {
+              var transcript = event.results[0][0].transcript;
+              prompt.value = prompt.value ? prompt.value + " " + transcript : transcript;
+              setStatus("Voice captured");
+            };
+            recognition.onerror = function (event) {
+              setStatus("Voice error: " + event.error, true);
+            };
+          };
+
           sendBtn.addEventListener("click", window.__sendMessage);
+          saveProfileBtn.addEventListener("click", window.__saveProfile);
+          saveModeBtn.addEventListener("click", window.__saveMode);
+          triageBtn.addEventListener("click", window.__runTriage);
+          downloadBtn.addEventListener("click", window.__downloadMarkdown);
+          glossaryBtn.addEventListener("click", window.__lookupGlossary);
+          refreshStateBtn.addEventListener("click", window.__refreshState);
+          resetBtn.addEventListener("click", window.__resetSession);
+          voiceBtn.addEventListener("click", window.__startVoice);
           prompt.addEventListener("keydown", function (event) {
             if (event.key === "Enter" && !event.shiftKey) {
               event.preventDefault();
               window.__sendMessage();
             }
           });
+          window.__refreshState();
           setStatus("UI fallback active");
         }
         window.addEventListener("load", function () {
