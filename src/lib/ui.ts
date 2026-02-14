@@ -73,8 +73,8 @@ export const APP_HTML = `<!doctype html>
             </select>
           </div>
           <div class="actions" style="margin-top:8px;">
-            <button id="saveProfile" class="secondary">Save Profile</button>
-            <button id="saveMode" class="secondary">Save Mode</button>
+            <button id="saveProfile" class="secondary" type="button" onclick="saveProfile()">Save Profile</button>
+            <button id="saveMode" class="secondary" type="button" onclick="saveMode()">Save Mode</button>
           </div>
         </article>
 
@@ -83,11 +83,11 @@ export const APP_HTML = `<!doctype html>
           <div id="messages" class="messages"></div>
           <textarea id="prompt" placeholder="Describe symptoms, duration, and what worries you most."></textarea>
           <div class="actions">
-            <button id="sendBtn" class="primary">Send</button>
-            <button id="voiceBtn" class="secondary">Voice Input</button>
-            <button id="triageBtn" class="triage">Run Triage</button>
-            <button id="downloadBtn" class="secondary">Download SOAP .md</button>
-            <button id="resetBtn" class="danger">Reset</button>
+            <button id="sendBtn" class="primary" type="button" onclick="sendMessage()">Send</button>
+            <button id="voiceBtn" class="secondary" type="button" onclick="startVoice()">Voice Input</button>
+            <button id="triageBtn" class="triage" type="button" onclick="runTriage()">Run Triage</button>
+            <button id="downloadBtn" class="secondary" type="button" onclick="downloadMarkdown()">Download SOAP .md</button>
+            <button id="resetBtn" class="danger" type="button" onclick="resetAll()">Reset</button>
           </div>
           <p id="status" class="status"></p>
         </article>
@@ -102,7 +102,7 @@ export const APP_HTML = `<!doctype html>
         <h3>Medical Glossary</h3>
         <div class="row">
           <input id="glossaryInput" placeholder="Try: triage, soap, dyspnea" />
-          <button id="glossaryBtn" class="secondary">Lookup</button>
+          <button id="glossaryBtn" class="secondary" type="button" onclick="lookupGlossary()">Lookup</button>
         </div>
         <pre id="glossaryPanel">No lookup yet.</pre>
       </section>
@@ -232,7 +232,10 @@ export const APP_HTML = `<!doctype html>
 
       async function sendMessage() {
         var text = prompt.value.trim();
-        if (!text) return;
+        if (!text) {
+          setStatus('Type a message before sending.', true);
+          return;
+        }
         addBubble('user', text);
         prompt.value = '';
         sendBtn.disabled = true;
