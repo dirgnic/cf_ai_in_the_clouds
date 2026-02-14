@@ -42,7 +42,6 @@ export const APP_HTML = `<!doctype html>
       .triage { background: #e9f3ea; color: #184f2d; }
       .danger { background: #f7e6e6; color: var(--warning); }
       .status { color: var(--muted); min-height: 20px; }
-      .row { display: flex; gap: 8px; align-items: center; }
       pre { background: #f7fbfb; border: 1px solid var(--border); border-radius: 10px; padding: 10px; max-height: 30vh; overflow: auto; margin: 8px 0 0; }
       @media (max-width: 900px) {
         .grid { grid-template-columns: 1fr; }
@@ -50,322 +49,259 @@ export const APP_HTML = `<!doctype html>
         .fields { grid-template-columns: 1fr; }
       }
     </style>
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
   </head>
   <body>
-    <main class="container">
-      <section class="hero">
-        <h1>Clinic Companion</h1>
-        <p>AI intake + triage + SOAP note draft. Educational only, not medical advice.</p>
-      </section>
+    <div id="root"></div>
 
-      <section class="grid">
-        <article class="card">
-          <h2>Profile Memory</h2>
-          <div class="fields">
-            <input id="ageRange" placeholder="Age range (e.g. 25-34)" />
-            <input id="sex" placeholder="Sex" />
-            <input id="conditions" placeholder="Conditions" />
-            <input id="allergies" placeholder="Allergies" />
-            <input id="medications" placeholder="Medications" />
-            <select id="clinicMode">
-              <option value="patient_friendly">Patient-friendly mode</option>
-              <option value="clinician">Clinician mode</option>
-            </select>
-          </div>
-          <div class="actions" style="margin-top:8px;">
-            <button id="saveProfile" class="secondary" type="button" onclick="saveProfile()">Save Profile</button>
-            <button id="saveMode" class="secondary" type="button" onclick="saveMode()">Save Mode</button>
-          </div>
-        </article>
+    <script type="text/babel">
+      const { useMemo, useState } = React;
 
-        <article class="card chat">
-          <h2>Chat Intake</h2>
-          <div id="messages" class="messages"></div>
-          <textarea id="prompt" placeholder="Describe symptoms, duration, and what worries you most."></textarea>
-          <div class="actions">
-            <button id="sendBtn" class="primary" type="button" onclick="sendMessage()">Send</button>
-            <button id="voiceBtn" class="secondary" type="button" onclick="startVoice()">Voice Input</button>
-            <button id="triageBtn" class="triage" type="button" onclick="runTriage()">Run Triage</button>
-            <button id="downloadBtn" class="secondary" type="button" onclick="downloadMarkdown()">Download SOAP .md</button>
-            <button id="resetBtn" class="danger" type="button" onclick="resetAll()">Reset</button>
-          </div>
-          <p id="status" class="status"></p>
-        </article>
-      </section>
-
-      <section class="grid">
-        <article class="card"><h3>Workflow Progress</h3><pre id="progressPanel">No triage yet.</pre></article>
-        <article class="card"><h3>Draft Case + SOAP Output</h3><pre id="resultPanel">Run triage to generate output.</pre></article>
-      </section>
-
-      <section class="card" style="margin-top:14px;">
-        <h3>Medical Glossary</h3>
-        <div class="row">
-          <input id="glossaryInput" placeholder="Try: triage, soap, dyspnea" />
-          <button id="glossaryBtn" class="secondary" type="button" onclick="lookupGlossary()">Lookup</button>
-        </div>
-        <pre id="glossaryPanel">No lookup yet.</pre>
-      </section>
-    </main>
-
-    <script>
-      var messages = document.getElementById('messages');
-      var prompt = document.getElementById('prompt');
-      var sendBtn = document.getElementById('sendBtn');
-      var voiceBtn = document.getElementById('voiceBtn');
-      var triageBtn = document.getElementById('triageBtn');
-      var downloadBtn = document.getElementById('downloadBtn');
-      var resetBtn = document.getElementById('resetBtn');
-      var saveProfileBtn = document.getElementById('saveProfile');
-      var saveModeBtn = document.getElementById('saveMode');
-      var clinicMode = document.getElementById('clinicMode');
-      var glossaryBtn = document.getElementById('glossaryBtn');
-      var glossaryInput = document.getElementById('glossaryInput');
-      var glossaryPanel = document.getElementById('glossaryPanel');
-      var statusEl = document.getElementById('status');
-      var progressPanel = document.getElementById('progressPanel');
-      var resultPanel = document.getElementById('resultPanel');
-
-      var sessionId = '';
-      var sessionIdKey = 'clinic-companion-session-id';
-
-      function makeSessionId() {
-        if (window.crypto && typeof window.crypto.randomUUID === 'function') {
-          return window.crypto.randomUUID();
-        }
+      function createSessionId() {
+        if (window.crypto && typeof window.crypto.randomUUID === 'function') return window.crypto.randomUUID();
         return 'sess-' + Date.now() + '-' + Math.floor(Math.random() * 1e9);
       }
 
-      function getOrCreateSessionId() {
+      function getSessionId() {
+        const key = 'clinic-companion-session-id';
         try {
-          var stored = localStorage.getItem(sessionIdKey);
-          if (stored) return stored;
-          var created = makeSessionId();
-          localStorage.setItem(sessionIdKey, created);
-          return created;
-        } catch (_) {
-          return makeSessionId();
+          const existing = localStorage.getItem(key);
+          if (existing) return existing;
+          const id = createSessionId();
+          localStorage.setItem(key, id);
+          return id;
+        } catch {
+          return createSessionId();
         }
       }
 
-      function bindEvents() {
-        if (!sendBtn || !triageBtn || !downloadBtn || !resetBtn || !saveProfileBtn || !saveModeBtn || !voiceBtn || !glossaryBtn || !prompt) {
-          setStatus('UI initialization failed: missing DOM nodes.', true);
-          return;
-        }
-
-        sendBtn.addEventListener('click', sendMessage);
-        triageBtn.addEventListener('click', runTriage);
-        downloadBtn.addEventListener('click', downloadMarkdown);
-        resetBtn.addEventListener('click', resetAll);
-        saveProfileBtn.addEventListener('click', saveProfile);
-        saveModeBtn.addEventListener('click', saveMode);
-        voiceBtn.addEventListener('click', startVoice);
-        glossaryBtn.addEventListener('click', lookupGlossary);
-
-        prompt.addEventListener('keydown', function(event) {
-          if (event.key === 'Enter' && !event.shiftKey) {
-            event.preventDefault();
-            sendMessage();
-          }
-        });
-      }
-
-      sessionId = getOrCreateSessionId();
-      bindEvents();
-      addBubble('assistant', 'Hi. I can gather symptom details, then run triage and draft a SOAP note. This is educational, not medical advice.');
-      setStatus('UI ready');
-
-      async function api(path, payload, timeoutMs) {
-        var controller = new AbortController();
-        var timeout = setTimeout(function() {
-          controller.abort();
-        }, timeoutMs || 45000);
-
+      async function api(path, payload, timeoutMs = 60000) {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), timeoutMs);
         try {
-          var res = await fetch(path, {
+          const res = await fetch(path, {
             method: 'POST',
             headers: { 'content-type': 'application/json' },
             body: JSON.stringify(payload),
-            signal: controller.signal
+            signal: controller.signal,
           });
-          var body = await res.json();
+          const body = await res.json();
           if (!res.ok) throw new Error(body.error || 'Request failed');
           return body;
-        } catch (error) {
-          if (error && error.name === 'AbortError') {
-            throw new Error('Request timed out. Check Cloudflare auth/bindings and try again.');
+        } catch (err) {
+          if (err && err.name === 'AbortError') {
+            throw new Error('Request timed out.');
           }
-          throw error;
+          throw err;
         } finally {
           clearTimeout(timeout);
         }
       }
 
-      async function saveProfile() {
-        try {
-          setStatus('Saving profile...');
-          await api('/api/profile', {
-            sessionId: sessionId,
-            profile: {
-              ageRange: document.getElementById('ageRange').value.trim(),
-              sex: document.getElementById('sex').value.trim(),
-              conditions: document.getElementById('conditions').value.trim(),
-              allergies: document.getElementById('allergies').value.trim(),
-              medications: document.getElementById('medications').value.trim()
-            }
-          });
-          setStatus('Profile saved');
-        } catch (error) {
-          setStatus(error.message || String(error), true);
-        }
-      }
+      function App() {
+        const sessionId = useMemo(getSessionId, []);
+        const [status, setStatus] = useState('UI ready');
+        const [messages, setMessages] = useState([
+          { role: 'assistant', text: 'Hi. I can gather symptom details, then run triage and draft a SOAP note. This is educational, not medical advice.' },
+        ]);
+        const [prompt, setPrompt] = useState('');
+        const [progress, setProgress] = useState('No triage yet.');
+        const [result, setResult] = useState('Run triage to generate output.');
+        const [glossary, setGlossary] = useState('No lookup yet.');
+        const [busy, setBusy] = useState(false);
+        const [profile, setProfile] = useState({ ageRange: '', sex: '', conditions: '', allergies: '', medications: '' });
+        const [mode, setMode] = useState('patient_friendly');
 
-      async function saveMode() {
-        try {
-          await api('/api/mode', { sessionId: sessionId, mode: clinicMode.value });
-          setStatus('Mode saved: ' + clinicMode.value);
-        } catch (error) {
-          setStatus(error.message || String(error), true);
-        }
-      }
-
-      async function sendMessage() {
-        var text = prompt.value.trim();
-        if (!text) {
-          setStatus('Type a message before sending.', true);
-          return;
-        }
-        addBubble('user', text);
-        prompt.value = '';
-        sendBtn.disabled = true;
-        prompt.disabled = true;
-        setStatus('Thinking...');
-
-        try {
-          var body = await api('/api/chat', { sessionId: sessionId, message: text }, 60000);
-          addBubble('assistant', body.reply);
-          setStatus('Done');
-        } catch (error) {
-          setStatus(error.message || String(error), true);
-        } finally {
-          sendBtn.disabled = false;
-          prompt.disabled = false;
-        }
-      }
-
-      async function runTriage() {
-        triageBtn.disabled = true;
-        var ticks = 0;
-        var interval = setInterval(function() {
-          ticks += 1;
-          setStatus('Running triage workflow' + '.'.repeat((ticks % 3) + 1));
-        }, 700);
-
-        setStatus('Running triage workflow...');
-        progressPanel.textContent = 'Starting...';
-
-        try {
-          var body = await api('/api/triage', { sessionId: sessionId }, 90000);
-          progressPanel.textContent = body.progress.join('\n');
-          resultPanel.textContent = JSON.stringify({
-            draftCase: body.draftCase,
-            triage: {
-              recommendation: body.triage.recommendation,
-              reason: body.triage.reason,
-              redFlags: body.triage.redFlags,
-              generatedAt: body.triage.generatedAt
-            },
-            soapNote: body.triage.soapNote
-          }, null, 2);
-          addBubble('assistant', 'Triage complete. This is educational, not medical advice.');
-          setStatus('Triage complete');
-        } catch (error) {
-          setStatus(error.message || String(error), true);
-        } finally {
-          clearInterval(interval);
-          triageBtn.disabled = false;
-        }
-      }
-
-      async function downloadMarkdown() {
-        try {
-          var body = await api('/api/export', { sessionId: sessionId });
-          var blob = new Blob([body.markdown], { type: 'text/markdown;charset=utf-8' });
-          var link = document.createElement('a');
-          link.href = URL.createObjectURL(blob);
-          link.download = 'clinic-companion-soap.md';
-          link.click();
-          URL.revokeObjectURL(link.href);
-          setStatus('Downloaded markdown');
-        } catch (error) {
-          setStatus(error.message || String(error), true);
-        }
-      }
-
-      async function lookupGlossary() {
-        try {
-          var term = glossaryInput.value.trim();
-          var body = await api('/api/glossary', { term: term });
-          glossaryPanel.textContent = body.definition
-            ? (body.term + ': ' + body.definition)
-            : ('Terms: ' + body.terms.join(', '));
-        } catch (error) {
-          setStatus(error.message || String(error), true);
-        }
-      }
-
-      async function resetAll() {
-        try {
-          await api('/api/reset', { sessionId: sessionId });
-          messages.innerHTML = '';
-          progressPanel.textContent = 'No triage yet.';
-          resultPanel.textContent = 'Run triage to generate output.';
-          addBubble('assistant', 'Session cleared. Start a new intake when ready.');
-          setStatus('Session reset');
-        } catch (error) {
-          setStatus(error.message || String(error), true);
-        }
-      }
-
-      function startVoice() {
-        var SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-        if (!SpeechRecognition) {
-          setStatus('Speech recognition is not supported in this browser.', true);
-          return;
-        }
-        var recognition = new SpeechRecognition();
-        recognition.lang = 'en-US';
-        recognition.interimResults = false;
-        recognition.maxAlternatives = 1;
-        setStatus('Listening...');
-        recognition.start();
-        recognition.onresult = function(event) {
-          var transcript = event.results[0][0].transcript;
-          prompt.value = prompt.value ? prompt.value + ' ' + transcript : transcript;
-          setStatus('Voice captured');
+        const onSend = async () => {
+          const text = prompt.trim();
+          if (!text) {
+            setStatus('Type a message before sending.');
+            return;
+          }
+          setMessages((prev) => [...prev, { role: 'user', text }]);
+          setPrompt('');
+          setBusy(true);
+          setStatus('Thinking...');
+          try {
+            const body = await api('/api/chat', { sessionId, message: text }, 90000);
+            setMessages((prev) => [...prev, { role: 'assistant', text: body.reply }]);
+            setStatus('Done');
+          } catch (e) {
+            setStatus(e.message || String(e));
+          } finally {
+            setBusy(false);
+          }
         };
-        recognition.onerror = function(event) {
-          setStatus('Voice error: ' + event.error, true);
+
+        const onSaveProfile = async () => {
+          try {
+            setStatus('Saving profile...');
+            await api('/api/profile', { sessionId, profile });
+            setStatus('Profile saved');
+          } catch (e) {
+            setStatus(e.message || String(e));
+          }
         };
+
+        const onSaveMode = async () => {
+          try {
+            await api('/api/mode', { sessionId, mode });
+            setStatus('Mode saved: ' + mode);
+          } catch (e) {
+            setStatus(e.message || String(e));
+          }
+        };
+
+        const onRunTriage = async () => {
+          setBusy(true);
+          setStatus('Running triage...');
+          setProgress('Starting...');
+          try {
+            const body = await api('/api/triage', { sessionId }, 120000);
+            setProgress((body.progress || []).join('\n'));
+            setResult(JSON.stringify({ draftCase: body.draftCase, triage: body.triage, soapNote: body.triage?.soapNote }, null, 2));
+            setMessages((prev) => [...prev, { role: 'assistant', text: 'Triage complete. This is educational, not medical advice.' }]);
+            setStatus('Triage complete');
+          } catch (e) {
+            setStatus(e.message || String(e));
+          } finally {
+            setBusy(false);
+          }
+        };
+
+        const onReset = async () => {
+          try {
+            await api('/api/reset', { sessionId });
+            setMessages([{ role: 'assistant', text: 'Session cleared. Start a new intake when ready.' }]);
+            setProgress('No triage yet.');
+            setResult('Run triage to generate output.');
+            setStatus('Session reset');
+          } catch (e) {
+            setStatus(e.message || String(e));
+          }
+        };
+
+        const onLookupGlossary = async () => {
+          try {
+            const term = prompt.trim();
+            const body = await api('/api/glossary', { term });
+            if (body.definition) setGlossary(body.term + ': ' + body.definition);
+            else setGlossary('Terms: ' + (body.terms || []).join(', '));
+          } catch (e) {
+            setStatus(e.message || String(e));
+          }
+        };
+
+        const onDownload = async () => {
+          try {
+            const body = await api('/api/export', { sessionId });
+            const blob = new Blob([body.markdown], { type: 'text/markdown;charset=utf-8' });
+            const link = document.createElement('a');
+            link.href = URL.createObjectURL(blob);
+            link.download = 'clinic-companion-soap.md';
+            link.click();
+            URL.revokeObjectURL(link.href);
+            setStatus('Downloaded markdown');
+          } catch (e) {
+            setStatus(e.message || String(e));
+          }
+        };
+
+        const onVoice = () => {
+          const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+          if (!SpeechRecognition) {
+            setStatus('Speech recognition not supported in this browser.');
+            return;
+          }
+          const recognition = new SpeechRecognition();
+          recognition.lang = 'en-US';
+          recognition.interimResults = false;
+          recognition.maxAlternatives = 1;
+          setStatus('Listening...');
+          recognition.start();
+          recognition.onresult = (event) => {
+            const transcript = event.results[0][0].transcript;
+            setPrompt((prev) => (prev ? prev + ' ' + transcript : transcript));
+            setStatus('Voice captured');
+          };
+          recognition.onerror = (event) => setStatus('Voice error: ' + event.error);
+        };
+
+        return (
+          <main className="container">
+            <section className="hero">
+              <h1>Clinic Companion</h1>
+              <p>AI intake + triage + SOAP note draft. Educational only, not medical advice.</p>
+            </section>
+
+            <section className="grid">
+              <article className="card">
+                <h2>Profile Memory</h2>
+                <div className="fields">
+                  <input placeholder="Age range" value={profile.ageRange} onChange={(e) => setProfile({ ...profile, ageRange: e.target.value })} />
+                  <input placeholder="Sex" value={profile.sex} onChange={(e) => setProfile({ ...profile, sex: e.target.value })} />
+                  <input placeholder="Conditions" value={profile.conditions} onChange={(e) => setProfile({ ...profile, conditions: e.target.value })} />
+                  <input placeholder="Allergies" value={profile.allergies} onChange={(e) => setProfile({ ...profile, allergies: e.target.value })} />
+                  <input placeholder="Medications" value={profile.medications} onChange={(e) => setProfile({ ...profile, medications: e.target.value })} />
+                  <select value={mode} onChange={(e) => setMode(e.target.value)}>
+                    <option value="patient_friendly">Patient-friendly mode</option>
+                    <option value="clinician">Clinician mode</option>
+                  </select>
+                </div>
+                <div className="actions" style={{ marginTop: 8 }}>
+                  <button className="secondary" onClick={onSaveProfile}>Save Profile</button>
+                  <button className="secondary" onClick={onSaveMode}>Save Mode</button>
+                </div>
+              </article>
+
+              <article className="card chat">
+                <h2>Chat Intake</h2>
+                <div className="messages">
+                  {messages.map((m, i) => (
+                    <div key={i} className={'bubble ' + m.role}>{m.text}</div>
+                  ))}
+                </div>
+                <textarea
+                  placeholder="Describe symptoms, duration, and what worries you most."
+                  value={prompt}
+                  onChange={(e) => setPrompt(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                      e.preventDefault();
+                      onSend();
+                    }
+                  }}
+                />
+                <div className="actions">
+                  <button className="primary" disabled={busy} onClick={onSend}>Send</button>
+                  <button className="secondary" onClick={onVoice}>Voice Input</button>
+                  <button className="triage" disabled={busy} onClick={onRunTriage}>Run Triage</button>
+                  <button className="secondary" onClick={onDownload}>Download SOAP .md</button>
+                  <button className="danger" onClick={onReset}>Reset</button>
+                </div>
+                <p className="status">{status}</p>
+              </article>
+            </section>
+
+            <section className="grid">
+              <article className="card"><h3>Workflow Progress</h3><pre>{progress}</pre></article>
+              <article className="card"><h3>Draft Case + SOAP Output</h3><pre>{result}</pre></article>
+            </section>
+
+            <section className="card" style={{ marginTop: 14 }}>
+              <h3>Medical Glossary</h3>
+              <div className="actions">
+                <button className="secondary" onClick={onLookupGlossary}>Lookup Prompt Term</button>
+              </div>
+              <pre>{glossary}</pre>
+            </section>
+          </main>
+        );
       }
 
-      function addBubble(role, text) {
-        var div = document.createElement('div');
-        div.className = 'bubble ' + role;
-        div.textContent = text;
-        messages.appendChild(div);
-        messages.scrollTop = messages.scrollHeight;
-      }
-
-      function setStatus(text, warn) {
-        statusEl.textContent = text;
-        statusEl.style.color = warn ? '#8b2f2f' : '#4f6f6f';
-      }
-
-      window.addEventListener('error', function(event) {
-        setStatus('UI error: ' + event.message, true);
-      });
+      ReactDOM.createRoot(document.getElementById('root')).render(<App />);
     </script>
   </body>
 </html>`;
