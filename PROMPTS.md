@@ -31,7 +31,3 @@ This file records planning-oriented prompts used with AI assistance during devel
 
 ## Prompt 10
 "Create a final submission checklist for repo naming, README quality, run instructions, and demo script."
-
-## Notes
-- Prompts are summarized for readability and focus on planning/design guidance.
-- Final implementation and code decisions were applied in this repository.
