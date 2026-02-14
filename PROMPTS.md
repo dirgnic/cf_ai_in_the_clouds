@@ -1,37 +1,37 @@
 # AI Prompts Used
 
-This file records prompts used with AI assistance while building this project.
+This file records planning-oriented prompts used with AI assistance during development.
 
 ## Prompt 1
-"git@github.com:dirgnic/in_the_clouds.git // configure this repo"
+"Help me set up repository remote, branch strategy, and initial project structure for `cf_ai_in_the_clouds`."
 
 ## Prompt 2
-"Optional Assignment: ... build this plan + smth original + step by step easy (use maybe my interest in medicine) // build this"
+"Create a step-by-step implementation plan for an original Cloudflare AI app with a medicine theme."
 
 ## Prompt 3
-"Here’s a simple, original AI app... Project idea: Clinic Companion (AI intake + triage + visit note)... // add all these as well"
+"Map assignment requirements to architecture: LLM, workflow coordination, chat/voice input, and persistent memory/state."
 
 ## Prompt 4
-"make sure u implemented everything currently lots of bugs"
+"Propose file/module structure for Workers, Durable Objects, Workflows, and frontend integration."
 
 ## Prompt 5
-"IMPORTANT NOTE: ... repository name must be prefixed with cf_ai_ ... include README.md ... include AI prompts used in PROMPTS.md ..."
+"Generate an MVP milestone plan with clear checkpoints and expected outputs."
 
 ## Prompt 6
-"yes do all"
+"Provide a Cloudflare integration plan for local dev, remote preview, and production deployment."
 
 ## Prompt 7
-"also make sure app runs.. step by step for me to do cloudfasre integration now"
+"Create a UI/UX plan for chat intake, triage progress, SOAP output, glossary, and session state views."
 
 ## Prompt 8
-"fix all buga"
+"Provide a bug triage and stabilization plan for frontend/backend communication issues."
 
 ## Prompt 9
-"impplement all ui views u did yet"
+"Design fallback behavior for workflow/API/model failures so the app remains functional in preview."
 
 ## Prompt 10
-"partial match search (tri returns multiple), and always show all terms + highlighted match."
+"Create a final submission checklist for repo naming, README quality, run instructions, and demo script."
 
 ## Notes
-- Prompts are captured verbatim or near-verbatim from the project conversation.
-- Implementation was produced specifically for this repository and assignment flow.
+- Prompts are summarized for readability and focus on planning/design guidance.
+- Final implementation and code decisions were applied in this repository.
