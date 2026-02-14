@@ -10,7 +10,7 @@ import {
   setTriage,
 } from "./do-client";
 import { json } from "./http";
-import { lookupGlossary, listGlossaryTerms } from "./glossary";
+import { searchGlossary } from "./glossary";
 import { applyTriageRules } from "./triage";
 import { asString, defaultState, normalizeMode, normalizeProfile } from "./validation";
 import type { Env, JsonObject, TriageResult } from "./types";
@@ -151,10 +151,7 @@ export async function handleExport(stub: DurableObjectStub): Promise<Response> {
 
 export function handleGlossary(body: JsonObject): Response {
   const term = asString(body.term, 50).toLowerCase();
-  if (!term) return json({ terms: listGlossaryTerms() });
-
-  const result = lookupGlossary(term);
-  if (!result) return json({ error: "Term not found", terms: listGlossaryTerms() }, 404);
+  const result = searchGlossary(term);
   return json(result);
 }
 

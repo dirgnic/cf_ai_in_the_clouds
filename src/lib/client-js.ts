@@ -213,9 +213,30 @@ export const APP_JS = `(() => {
       try {
         const term = (glossaryInputEl.value || "").trim();
         const body = await api("/api/glossary", { term });
-        glossaryPanel.textContent = body.definition
-          ? body.term + ": " + body.definition
-          : "Terms: " + (body.terms || []).join(", ");
+        const terms = Array.isArray(body.terms) ? body.terms : [];
+        const matches = Array.isArray(body.matches) ? body.matches : [];
+        const matchedSet = new Set(matches.map((m) => m.term));
+
+        const lines = [];
+        lines.push("Query: " + (body.query || "(empty)"));
+        lines.push("");
+
+        if (matches.length === 0) {
+          lines.push("Matches: none");
+        } else {
+          lines.push("Matches:");
+          for (const m of matches) {
+            lines.push("- " + m.term + ": " + m.definition);
+          }
+        }
+
+        lines.push("");
+        lines.push("All terms:");
+        for (const t of terms) {
+          lines.push((matchedSet.has(t) ? "* " : "- ") + t);
+        }
+
+        glossaryPanel.textContent = lines.join("\n");
       } catch (err) {
         setStatus(err.message || String(err), true);
       }
