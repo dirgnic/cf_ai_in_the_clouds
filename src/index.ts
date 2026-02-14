@@ -22,8 +22,16 @@ export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
 
-    if (request.method === "GET" && (url.pathname === "/" || url.pathname === "/index.html")) {
-      return new Response(APP_HTML, { headers: { "content-type": "text/html; charset=utf-8" } });
+    if (request.method === "GET") {
+      if (url.pathname === "/" || url.pathname === "/index.html") {
+        return new Response(APP_HTML, { headers: { "content-type": "text/html; charset=utf-8" } });
+      }
+
+      if (url.pathname === "/favicon.ico" || url.pathname === "/apple-touch-icon.png" || url.pathname === "/apple-touch-icon-precomposed.png") {
+        return new Response(null, { status: 204 });
+      }
+
+      return json({ error: "Not found" }, 404);
     }
 
     if (request.method !== "POST") {
