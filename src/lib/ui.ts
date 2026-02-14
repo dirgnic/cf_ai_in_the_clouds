@@ -51,7 +51,91 @@ export const APP_HTML = `<!doctype html>
         .fields { grid-template-columns: 1fr; }
       }
     </style>
-    <script defer src="/app.js?v=1"></script>
+    <script defer src="/app.js?v=2"></script>
+    <script>
+      (function () {
+        function byId(id) { return document.getElementById(id); }
+        function setStatus(text, isError) {
+          var el = byId("status");
+          if (!el) return;
+          el.textContent = text;
+          el.style.color = isError ? "#8b2f2f" : "#4f6f6f";
+        }
+        function makeSessionId() {
+          return "sess-" + Date.now() + "-" + Math.floor(Math.random() * 1e9);
+        }
+        function getSessionId() {
+          var key = "clinic-companion-session-id";
+          try {
+            var existing = localStorage.getItem(key);
+            if (existing) return existing;
+            var created = makeSessionId();
+            localStorage.setItem(key, created);
+            return created;
+          } catch (_) {
+            return makeSessionId();
+          }
+        }
+        function addBubble(role, text) {
+          var messages = byId("messages");
+          if (!messages) return;
+          var div = document.createElement("div");
+          div.className = "bubble " + role;
+          div.textContent = text;
+          messages.appendChild(div);
+          messages.scrollTop = messages.scrollHeight;
+        }
+        function fallbackBootstrap() {
+          if (window.__cc_bootstrapDone) return;
+          var sendBtn = byId("sendBtn");
+          var prompt = byId("prompt");
+          if (!sendBtn || !prompt) {
+            setStatus("UI failed to initialize.", true);
+            return;
+          }
+          var sessionId = getSessionId();
+          window.__sendMessage = function () {
+            var text = (prompt.value || "").trim();
+            if (!text) {
+              setStatus("Type a message before sending.", true);
+              return;
+            }
+            setStatus("Thinking...");
+            sendBtn.disabled = true;
+            fetch("/api/chat", {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ sessionId: sessionId, message: text })
+            })
+              .then(function (r) { return r.json().then(function (b) { return { ok: r.ok, body: b }; }); })
+              .then(function (res) {
+                if (!res.ok) throw new Error(res.body.error || "Request failed");
+                addBubble("user", text);
+                addBubble("assistant", res.body.reply || "(no reply)");
+                prompt.value = "";
+                setStatus("Done (fallback mode)");
+              })
+              .catch(function (err) {
+                setStatus(err && err.message ? err.message : String(err), true);
+              })
+              .finally(function () {
+                sendBtn.disabled = false;
+              });
+          };
+          sendBtn.addEventListener("click", window.__sendMessage);
+          prompt.addEventListener("keydown", function (event) {
+            if (event.key === "Enter" && !event.shiftKey) {
+              event.preventDefault();
+              window.__sendMessage();
+            }
+          });
+          setStatus("UI fallback active");
+        }
+        window.addEventListener("load", function () {
+          setTimeout(fallbackBootstrap, 700);
+        });
+      })();
+    </script>
   </head>
   <body>
     <main class="container">

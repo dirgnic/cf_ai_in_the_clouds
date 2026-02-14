@@ -305,6 +305,7 @@ export const APP_JS = `(() => {
     window.__resetSession = resetSession;
     window.__startVoice = startVoice;
     window.__cc_debug = { boot: "appjs-bound", sessionId };
+    window.__cc_bootstrapDone = true;
 
     refreshState();
     setStatus("UI ready");
