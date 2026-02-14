@@ -50,6 +50,172 @@ export const APP_HTML = `<!doctype html>
         .fields { grid-template-columns: 1fr; }
       }
     </style>
+    <script>
+      // Failsafe handlers: keep UI buttons functional even if main script fails.
+      (function () {
+        function setStatus(text, isError) {
+          var el = document.getElementById('status');
+          if (!el) return;
+          el.textContent = text;
+          el.style.color = isError ? '#8b2f2f' : '#4f6f6f';
+        }
+
+        function getSessionId() {
+          var key = 'clinic-companion-session-id';
+          try {
+            var existing = localStorage.getItem(key);
+            if (existing) return existing;
+            var created = (window.crypto && typeof window.crypto.randomUUID === 'function')
+              ? window.crypto.randomUUID()
+              : ('sess-' + Date.now() + '-' + Math.floor(Math.random() * 1e9));
+            localStorage.setItem(key, created);
+            return created;
+          } catch (_) {
+            return 'sess-' + Date.now() + '-' + Math.floor(Math.random() * 1e9);
+          }
+        }
+
+        function getPromptText() {
+          var promptEl = document.getElementById('prompt');
+          return promptEl ? (promptEl.value || '').trim() : '';
+        }
+
+        async function api(path, payload, timeoutMs) {
+          var controller = new AbortController();
+          var timeout = setTimeout(function () { controller.abort(); }, timeoutMs || 60000);
+          try {
+            var res = await fetch(path, {
+              method: 'POST',
+              headers: { 'content-type': 'application/json' },
+              body: JSON.stringify(payload || {}),
+              signal: controller.signal,
+            });
+            var body = await res.json();
+            if (!res.ok) throw new Error(body.error || 'Request failed');
+            return body;
+          } finally {
+            clearTimeout(timeout);
+          }
+        }
+
+        window.__sendMessage = window.__sendMessage || async function () {
+          try {
+            var text = getPromptText();
+            if (!text) {
+              setStatus('Type a message before sending.', true);
+              return;
+            }
+            setStatus('Thinking...');
+            var body = await api('/api/chat', { sessionId: getSessionId(), message: text }, 90000);
+            setStatus(body && body.reply ? 'Done' : 'Sent');
+          } catch (err) {
+            setStatus((err && err.message) || String(err), true);
+          }
+        };
+
+        window.__saveProfile = window.__saveProfile || async function () {
+          try {
+            setStatus('Saving profile...');
+            await api('/api/profile', {
+              sessionId: getSessionId(),
+              profile: {
+                ageRange: (document.getElementById('ageRange') || {}).value || '',
+                sex: (document.getElementById('sex') || {}).value || '',
+                conditions: (document.getElementById('conditions') || {}).value || '',
+                allergies: (document.getElementById('allergies') || {}).value || '',
+                medications: (document.getElementById('medications') || {}).value || '',
+              },
+            });
+            setStatus('Profile saved');
+          } catch (err) {
+            setStatus((err && err.message) || String(err), true);
+          }
+        };
+
+        window.__saveMode = window.__saveMode || async function () {
+          try {
+            var modeEl = document.getElementById('clinicMode');
+            await api('/api/mode', { sessionId: getSessionId(), mode: modeEl ? modeEl.value : 'patient_friendly' });
+            setStatus('Mode saved');
+          } catch (err) {
+            setStatus((err && err.message) || String(err), true);
+          }
+        };
+
+        window.__runTriage = window.__runTriage || async function () {
+          try {
+            setStatus('Running triage...');
+            var body = await api('/api/triage', { sessionId: getSessionId() }, 120000);
+            var panel = document.getElementById('progressPanel');
+            if (panel) panel.textContent = (body.progress || []).join('\\n');
+            setStatus('Triage complete');
+          } catch (err) {
+            setStatus((err && err.message) || String(err), true);
+          }
+        };
+
+        window.__downloadMarkdown = window.__downloadMarkdown || async function () {
+          try {
+            var body = await api('/api/export', { sessionId: getSessionId() });
+            var blob = new Blob([body.markdown], { type: 'text/markdown;charset=utf-8' });
+            var link = document.createElement('a');
+            link.href = URL.createObjectURL(blob);
+            link.download = 'clinic-companion-soap.md';
+            link.click();
+            URL.revokeObjectURL(link.href);
+            setStatus('Downloaded markdown');
+          } catch (err) {
+            setStatus((err && err.message) || String(err), true);
+          }
+        };
+
+        window.__lookupGlossary = window.__lookupGlossary || async function () {
+          try {
+            var input = document.getElementById('glossaryInput');
+            var term = input ? (input.value || '').trim() : '';
+            var body = await api('/api/glossary', { term: term });
+            var panel = document.getElementById('glossaryPanel');
+            if (panel) panel.textContent = body.definition ? (body.term + ': ' + body.definition) : ('Terms: ' + (body.terms || []).join(', '));
+          } catch (err) {
+            setStatus((err && err.message) || String(err), true);
+          }
+        };
+
+        window.__resetSession = window.__resetSession || async function () {
+          try {
+            await api('/api/reset', { sessionId: getSessionId() });
+            setStatus('Session reset');
+          } catch (err) {
+            setStatus((err && err.message) || String(err), true);
+          }
+        };
+
+        window.__startVoice = window.__startVoice || function () {
+          var SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+          if (!SpeechRecognition) {
+            setStatus('Speech recognition not supported in this browser.', true);
+            return;
+          }
+          var recognition = new SpeechRecognition();
+          recognition.lang = 'en-US';
+          recognition.interimResults = false;
+          recognition.maxAlternatives = 1;
+          recognition.start();
+          recognition.onresult = function (event) {
+            var promptEl = document.getElementById('prompt');
+            if (!promptEl) return;
+            var transcript = event.results[0][0].transcript;
+            promptEl.value = promptEl.value ? promptEl.value + ' ' + transcript : transcript;
+            setStatus('Voice captured');
+          };
+          recognition.onerror = function (event) {
+            setStatus('Voice error: ' + event.error, true);
+          };
+        };
+
+        window.__cc_debug = window.__cc_debug || { boot: 'failsafe-loaded' };
+      })();
+    </script>
   </head>
   <body>
     <main class="container">
