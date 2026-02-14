@@ -97,6 +97,12 @@ Notes:
 - Session state viewer
 - Session reset
 
+## Screenshots
+
+![Clinic Companion Screenshot 1](docs/screenshots/screenshot-01.png)
+![Clinic Companion Screenshot 2](docs/screenshots/screenshot-02.png)
+![Clinic Companion Screenshot 3](docs/screenshots/screenshot-03.png)
+
 ## Safety and Privacy
 
 - Educational only, not medical advice.
