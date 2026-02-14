@@ -12,6 +12,7 @@ import {
   handleTriage,
 } from "./lib/handlers";
 import { TriageWorkflow } from "./lib/triage-workflow";
+import { APP_JS } from "./lib/client-js";
 import { APP_HTML } from "./lib/ui";
 import { isValidSessionId } from "./lib/validation";
 import type { Env } from "./lib/types";
@@ -24,7 +25,21 @@ export default {
 
     if (request.method === "GET") {
       if (url.pathname === "/" || url.pathname === "/index.html") {
-        return new Response(APP_HTML, { headers: { "content-type": "text/html; charset=utf-8" } });
+        return new Response(APP_HTML, {
+          headers: {
+            "content-type": "text/html; charset=utf-8",
+            "cache-control": "no-store",
+          },
+        });
+      }
+
+      if (url.pathname === "/app.js") {
+        return new Response(APP_JS, {
+          headers: {
+            "content-type": "application/javascript; charset=utf-8",
+            "cache-control": "no-store",
+          },
+        });
       }
 
       if (url.pathname === "/favicon.ico" || url.pathname === "/apple-touch-icon.png" || url.pathname === "/apple-touch-icon-precomposed.png") {
