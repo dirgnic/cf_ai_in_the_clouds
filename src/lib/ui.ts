@@ -73,8 +73,8 @@ export const APP_HTML = `<!doctype html>
             </select>
           </div>
           <div class="actions" style="margin-top:8px;">
-            <button id="saveProfile" type="button" class="secondary">Save Profile</button>
-            <button id="saveMode" type="button" class="secondary">Save Mode</button>
+            <button id="saveProfile" type="button" class="secondary" onclick="window.__saveProfile && window.__saveProfile()">Save Profile</button>
+            <button id="saveMode" type="button" class="secondary" onclick="window.__saveMode && window.__saveMode()">Save Mode</button>
           </div>
         </article>
 
@@ -83,11 +83,11 @@ export const APP_HTML = `<!doctype html>
           <div id="messages" class="messages"></div>
           <textarea id="prompt" placeholder="Describe symptoms, duration, and what worries you most."></textarea>
           <div class="actions">
-            <button id="sendBtn" type="button" class="primary">Send</button>
-            <button id="voiceBtn" type="button" class="secondary">Voice Input</button>
-            <button id="triageBtn" type="button" class="triage">Run Triage</button>
-            <button id="downloadBtn" type="button" class="secondary">Download SOAP .md</button>
-            <button id="resetBtn" type="button" class="danger">Reset</button>
+            <button id="sendBtn" type="button" class="primary" onclick="window.__sendMessage && window.__sendMessage()">Send</button>
+            <button id="voiceBtn" type="button" class="secondary" onclick="window.__startVoice && window.__startVoice()">Voice Input</button>
+            <button id="triageBtn" type="button" class="triage" onclick="window.__runTriage && window.__runTriage()">Run Triage</button>
+            <button id="downloadBtn" type="button" class="secondary" onclick="window.__downloadMarkdown && window.__downloadMarkdown()">Download SOAP .md</button>
+            <button id="resetBtn" type="button" class="danger" onclick="window.__resetSession && window.__resetSession()">Reset</button>
           </div>
           <p id="status" class="status">UI ready</p>
         </article>
@@ -102,7 +102,7 @@ export const APP_HTML = `<!doctype html>
         <h3>Medical Glossary</h3>
         <div class="row">
           <input id="glossaryInput" placeholder="Try: triage, soap, dyspnea" />
-          <button id="glossaryBtn" type="button" class="secondary">Lookup</button>
+          <button id="glossaryBtn" type="button" class="secondary" onclick="window.__lookupGlossary && window.__lookupGlossary()">Lookup</button>
         </div>
         <pre id="glossaryPanel">No lookup yet.</pre>
       </section>
@@ -339,6 +339,21 @@ export const APP_HTML = `<!doctype html>
         window.addEventListener('error', function (event) {
           setStatus('UI error: ' + event.message, true);
         });
+
+        // Debug + fallback hooks for manual triggering from DevTools.
+        window.__sendMessage = sendMessage;
+        window.__saveProfile = saveProfile;
+        window.__saveMode = saveMode;
+        window.__runTriage = runTriage;
+        window.__downloadMarkdown = downloadMarkdown;
+        window.__lookupGlossary = lookupGlossary;
+        window.__resetSession = resetSession;
+        window.__startVoice = startVoice;
+        window.__cc_debug = {
+          sessionId: sessionId,
+          hasSendBtn: !!sendBtn,
+          hasPrompt: !!promptEl,
+        };
       })();
     </script>
   </body>
