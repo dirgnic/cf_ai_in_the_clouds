@@ -44,7 +44,19 @@ export const APP_HTML = `<!doctype html>
       .danger { background: #f7e6e6; color: var(--warning); }
       .status { color: var(--muted); min-height: 20px; }
       .row { display: flex; gap: 8px; align-items: center; }
-      pre { background: #f7fbfb; border: 1px solid var(--border); border-radius: 10px; padding: 10px; max-height: 30vh; overflow: auto; margin: 8px 0 0; }
+      pre {
+        background: #f7fbfb;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 10px;
+        max-height: 30vh;
+        max-width: 100%;
+        overflow: auto;
+        margin: 8px 0 0;
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+        word-break: break-word;
+      }
       @media (max-width: 900px) {
         .grid { grid-template-columns: 1fr; }
         .messages { height: 38vh; }
