@@ -112,7 +112,7 @@ npm run deploy
 ## Submission Links
 
 - GitHub repo: `https://github.com/dirgnic/cf_ai_in_the_clouds`
-- Live URL: `<your deployed worker url>`
+- Live URL: `https://cf-ai-clinic-companion.immusic33.workers.dev/`
 - AI prompts log: `PROMPTS.md`
 
 ## Reference Docs
