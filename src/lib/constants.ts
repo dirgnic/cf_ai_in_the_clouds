@@ -1,4 +1,5 @@
 export const MODEL = "@cf/meta/llama-3.3-70b-instruct-fp8-fast";
+export const FALLBACK_MODEL = "@cf/meta/llama-3.1-8b-instruct";
 export const MAX_HISTORY_MESSAGES = 40;
 export const MAX_MESSAGE_CHARS = 2000;
 export const MAX_SUMMARY_CHARS = 1200;

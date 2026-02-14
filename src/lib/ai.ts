@@ -1,4 +1,4 @@
-import { CASE_EXTRACT_PROMPT, MAX_SUMMARY_CHARS, MODEL } from "./constants";
+import { CASE_EXTRACT_PROMPT, FALLBACK_MODEL, MAX_SUMMARY_CHARS, MODEL } from "./constants";
 import { defaultCaseData, extractFirstJsonObject, normalizeCaseData } from "./validation";
 import type { CaseData, ChatMessage, Env, SessionState, TriageResult } from "./types";
 
@@ -7,13 +7,23 @@ export async function callModel(
   messages: Array<{ role: "system" | "user" | "assistant"; content: string }>,
   opts?: { maxTokens?: number; temperature?: number },
 ): Promise<string> {
-  const result = (await env.AI.run(MODEL, {
+  const payload = {
     messages,
     max_tokens: opts?.maxTokens ?? 420,
     temperature: opts?.temperature ?? 0.35,
-  })) as { response?: string };
+  };
 
-  return (result.response || "").trim();
+  try {
+    const result = (await env.AI.run(MODEL, payload)) as { response?: string };
+    return (result.response || "").trim();
+  } catch {
+    try {
+      const fallback = (await env.AI.run(FALLBACK_MODEL, payload)) as { response?: string };
+      return (fallback.response || "").trim();
+    } catch {
+      return "AI is temporarily unavailable in this local environment. This is educational, not medical advice.";
+    }
+  }
 }
 
 export async function buildSummary(env: Env, history: ChatMessage[]): Promise<string> {
@@ -35,21 +45,43 @@ export async function buildSummary(env: Env, history: ChatMessage[]): Promise<st
 export async function extractCase(env: Env, state: SessionState): Promise<CaseData> {
   const context = state.history.slice(-20).map((m) => m.role + ": " + m.content).join("\\n");
 
-  const raw = (await env.AI.run(MODEL, {
-    messages: [
-      { role: "system", content: CASE_EXTRACT_PROMPT },
-      {
-        role: "user",
-        content:
-          "Profile: " + JSON.stringify(state.profile) +
-          "\\nConversation summary: " + (state.conversationSummary || "(none)") +
-          "\\nChat:\\n" + context,
-      },
-    ],
-    max_tokens: 380,
-    temperature: 0,
-    response_format: { type: "json_object" },
-  })) as { response?: string };
+  let raw: { response?: string };
+  try {
+    raw = (await env.AI.run(MODEL, {
+      messages: [
+        { role: "system", content: CASE_EXTRACT_PROMPT },
+        {
+          role: "user",
+          content:
+            "Profile: " + JSON.stringify(state.profile) +
+            "\\nConversation summary: " + (state.conversationSummary || "(none)") +
+            "\\nChat:\\n" + context,
+        },
+      ],
+      max_tokens: 380,
+      temperature: 0,
+      response_format: { type: "json_object" },
+    })) as { response?: string };
+  } catch {
+    try {
+      raw = (await env.AI.run(FALLBACK_MODEL, {
+        messages: [
+          { role: "system", content: CASE_EXTRACT_PROMPT },
+          {
+            role: "user",
+            content:
+              "Profile: " + JSON.stringify(state.profile) +
+              "\\nConversation summary: " + (state.conversationSummary || "(none)") +
+              "\\nChat:\\n" + context,
+          },
+        ],
+        max_tokens: 380,
+        temperature: 0,
+      })) as { response?: string };
+    } catch {
+      return defaultCaseData();
+    }
+  }
 
   const payload = raw.response || "";
   const jsonSlice = extractFirstJsonObject(payload);
